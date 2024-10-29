@@ -12,8 +12,6 @@ In this work, we investigate whether the usage of intermediate explanations in t
 ## Project structure
 The repo is distributed in the following directories:
  * `models`: Includes the code for training and evaluating all the models that are used in our experiments.
- * `bert-nli`: Includes the code for training and evaluating a BERT classifier that does not leverage explanations and thus serves as baseline for our experiments.
- * `explain-then-predict`: Includes the code for training and evaluating explanations-based models according to the "Explain Then Predict" pipeline 
  * `adversarial_attack`: Includes the code for performing adversarial attacks against the explanation-free and explanations-based models.
 
 ## Setup
