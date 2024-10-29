@@ -3,7 +3,7 @@
 [![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/) [![HuggingFace](https://img.shields.io/badge/HuggingFace-FFD21E?logo=huggingface&logoColor=black)](https://huggingface.co/) [![TextAttack](https://img.shields.io/badge/TextAttack-20232A?logo=octopusdeploy&logoColor=D61F2A)](https://textattack.readthedocs.io/)
 
 ## Overview
-This repository contains the source code for our BlackBoxNLP 2024 paper:
+This repository contains the source code for our BlackBoxNLP 2024 @ EMNLP paper:
 
 _Enhancing adversarial robustness in Natural Language Inference using explanations_ (https://arxiv.org/abs/2409.07423)
 
