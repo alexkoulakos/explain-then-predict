@@ -1,0 +1,176 @@
+import textattack
+import torch
+import argparse
+import datasets
+import ssl
+import os
+import sys
+
+from typing import List
+
+from textattack.attacker import Attacker
+from textattack.attack_args import AttackArgs
+
+from textattack.attack_recipes import TextFoolerJin2019
+
+from textattack.transformations.word_swaps import WordSwapEmbedding
+from textattack.constraints.semantics import WordEmbeddingDistance
+from textattack.constraints.pre_transformation import InputColumnModification
+
+from utils import BertNLIModel, BertNLITokenizer, BertNLIModelWrapper
+
+def load_dataset():
+    dataset = datasets.load_dataset("snli", split="test").filter(lambda example: example['label'] in [0, 1, 2])
+
+    data = []
+
+    for d in dataset:
+        input = (d['premise'], d['hypothesis'])
+        output = d['label']
+        
+        data.append((input, output))
+    
+    return textattack.datasets.Dataset(data, input_columns=("premise", "hypothesis"))
+
+# Add InputColumnModification constraint, so that perturbations happen on either premise or hypothesis.
+def add_input_column_modification(attack, column_to_ignore):
+    assert column_to_ignore in ['premise', 'hypothesis']
+
+    pre_transformation_constraints = []
+
+    new_pretransformation_constraint = InputColumnModification(
+        matching_column_labels=['premise', 'hypothesis'], 
+        columns_to_ignore={column_to_ignore}
+    )
+
+    for i in range(len(attack.pre_transformation_constraints)):
+        if not isinstance(attack.pre_transformation_constraints[i], InputColumnModification):
+            pre_transformation_constraints.append(attack.pre_transformation_constraints[i])
+    
+    pre_transformation_constraints.append(new_pretransformation_constraint)
+
+    attack.pre_transformation_constraints = pre_transformation_constraints
+
+    return attack
+
+def construct_attacks(args) -> List[textattack.Attack]:
+    attacks = []
+
+    for min_cos_sim in args.min_cos_sim:
+        # Bind TextFooler attack recipe to model wrapper
+        attack = TextFoolerJin2019.build(model_wrapper)
+
+        # Create WordSwapEmbedding transformation according to `max_candidates` parameter.
+        attack.transformation = WordSwapEmbedding(max_candidates=args.max_candidates)
+
+        # Create WordEmbeddingDistance constraint according to `min_cos_sim` parameter.
+        constraint = WordEmbeddingDistance(min_cos_sim=min_cos_sim)
+
+        for i in range(len(attack.constraints)):
+            if isinstance(attack.constraints[i], WordEmbeddingDistance):
+                attack.constraints[i] = constraint
+        
+        attacks.append(add_input_column_modification(attack, args.column_to_ignore))
+    
+    return attacks
+
+if __name__ == '__main__':
+    try:
+        _create_unverified_https_context = ssl._create_unverified_context
+    except AttributeError:
+        # Legacy Python that doesn't verify HTTPS certificates by default
+        pass
+    else:
+        # Handle target environment that doesn't support HTTPS verification
+        ssl._create_default_https_context = _create_unverified_https_context
+
+    parser = argparse.ArgumentParser()
+
+    # Required params
+    parser.add_argument("--bert_nli_trained_model", type=str, required=True, 
+                        help="Path to fine-tuned baseline classifier model file")
+    
+    parser.add_argument("--output_dir", type=str, required=True,
+                        help="Directory to store output files.")
+
+    # Non-required params
+    parser.add_argument("--encoder_max_len", type=int, default=128, 
+                        help="Max number of tokens the encoder can process.")
+    
+    parser.add_argument("--min_cos_sim", nargs="+", type=float, default=0.5,
+                        help="List of cosine similarity thresholds to use in each run.")
+    parser.add_argument("--max_candidates", type=int, default=50,
+                        help="Max number of candidates (same for all runs).")
+    
+    parser.add_argument("--target_sentence", type=str, default="premise",
+                        help="Input sentence to be perturbed (premise or hypothesis)")
+    parser.add_argument("--num_samples", type=int, default=-1, 
+                        help="Number of samples to attack (-1 corresponds to the entire test set)")
+    
+    parser.add_argument("--seed", type=int, default=123,
+                        help="Random seed for initialization")
+
+    args = parser.parse_args()
+
+    assert args.target_sentence in ['premise', 'hypothesis'], "Parameter `target_sentence` can only have the values 'premise' or 'hypothesis'"
+
+    if args.target_sentence == 'premise':
+        args.column_to_ignore = 'hypothesis'
+    else:
+        args.column_to_ignore = 'premise'
+
+    # Extract checkpoint info from BERT-NLI trained model file
+    # All trained BERT-NLI models are located in directories of the form `./train_results/{transformers_version}/{encoder_checkpoint}/encoder_max_length_{encoder_max_length}__batch_size_{batch_size}__n_gpus_{n_gpus}/model.pt`.
+    args.bert_nli_encoder_checkpoint =  args.bert_nli_trained_model_file.split('/')[-3]
+    
+    args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    # Load pretrained model
+    model = BertNLIModel(
+        args.bert_nli_encoder_checkpoint,
+        args.device
+    )
+
+    model.to(args.device)
+
+    if args.device == torch.device('cpu'):
+        model.load_state_dict(torch.load(args.bert_nli_trained_model_file, map_location=args.device)['model_state_dict'])
+    else:
+        model.load_state_dict(torch.load(args.bert_nli_trained_model_file)['model_state_dict'])
+    
+    # Load tokenizer for BERT-NLI task
+    tokenizer = BertNLITokenizer(
+        args.bert_nli_encoder_checkpoint, 
+        args.encoder_max_len
+    )
+
+    # Load full model via its model wrapper
+    model_wrapper = BertNLIModelWrapper(model, tokenizer)
+
+    # Specify victim dataset
+    dataset = load_dataset()
+
+    # Create attacks, based on the different values of min_cos_sim
+    attacks = construct_attacks(args)
+
+    for attack, min_cos_sim in zip(attacks, args.min_cos_sim):
+        current_output_dir = args.output_dir + f"max_candidates_{args.max_candidates}__min_cos_sim_{min_cos_sim}/"
+
+        # Redirect stdout to a log file
+        sys.stdout = open(current_output_dir + 'output.log', 'w')
+
+        # Attack all test samples with CSV logging and checkpoint saved every 1000 intervals
+        attack_args = AttackArgs(
+            num_examples=args.num_samples,
+            log_to_csv=current_output_dir + "results.csv",
+            checkpoint_interval=1000,
+            checkpoint_dir=current_output_dir + "checkpoints",
+            disable_stdout=False,
+            enable_advance_metrics=False,
+            random_seed=args.seed
+        )
+
+        attacker = Attacker(attack, dataset, attack_args)
+        attacker.attack_dataset()
