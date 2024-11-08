@@ -12,8 +12,8 @@ In this work, we investigate whether the usage of intermediate explanations in t
 ## Project structure
 The repo is distributed in the following directories:
  * `models`: Includes the code for training and evaluating all the models that are used in our experiments.
- * `adversarial_attack`: Includes the code for performing adversarial attacks against the explanation-free and explanations-based models.
+ * `adversarial_attacks`: Includes the code for performing adversarial attacks against the aforementioned models.
 
-## Setup
+## Installation
 
 ## Citation

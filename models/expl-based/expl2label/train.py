@@ -1,6 +1,4 @@
 import torch
-import torch.nn as nn
-import transformers
 import argparse
 import os
 import logging
@@ -8,8 +6,11 @@ import time
 import sys
 
 from torch.utils.data import DataLoader, SequentialSampler, RandomSampler
+from torch.optim import Adam
+from torch.nn import CrossEntropyLoss
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel
+from typing import Dict
 
 sys.path.append("../")
 
@@ -18,17 +19,15 @@ from tokenizer import Expl2LabelTokenizer
 from helpers import *
 from dataset import EsnliDataset
 
-ID2LABEL = {0: 'entailment', 1: 'neutral', 2: 'contradiction'}
-
 def train_epoch(
         model: Expl2LabelModel, 
         tokenizer: Expl2LabelTokenizer, 
         epoch: int, 
         dataloader: DataLoader, 
-        optimizer, 
-        criterion, 
+        optimizer: Adam, 
+        criterion: CrossEntropyLoss, 
         args
-    ) -> dict:
+    ) -> Dict[str, float]:
     """
     Train `model` for an epoch using training `data`.
     Returns a `dict` with the calculated cross-entropy loss and accuracy.
@@ -101,13 +100,13 @@ def train_epoch(
     }
 
 # IMPORTANT: Vaidation happens only on GPU 0!
-def evaluate_epoch(
+def validate(
         model: Expl2LabelModel, 
         tokenizer: Expl2LabelTokenizer, 
         dataloader: DataLoader, 
-        criterion, 
+        criterion: CrossEntropyLoss, 
         args
-    ) -> dict:
+    ) -> Dict[str, float]:
     """
     Evaluate model using validation `data`.
     Returns a `dict` with the calculated cross-entropy loss and accuracy.
@@ -118,7 +117,7 @@ def evaluate_epoch(
     validation_acc = 0
 
     with torch.no_grad():
-        for step, batch in enumerate(dataloader, 1):
+        for _, batch in enumerate(dataloader, 1):
             gold_labels = batch['label'].to(args.device)
 
             for index in range(1, 4):
@@ -155,19 +154,14 @@ def main():
     parser.add_argument("--encoder_checkpt", required=True, type=str, 
                         help="Encoder checkpoint for weights initialization.")
     
-    parser.add_argument("--train_data", type=str, required=True,
-                        help="Path to training data csv file.")
-    parser.add_argument("--validation_data", type=str, required=True,
-                        help="Path to validation data csv file.")
-    
     parser.add_argument("--output_dir", type=str, required=True,
-                        help="Directory to store output files (checkpoints, trained_model, log file).")
+                        help="Directory to store output files. NOTE: Please, provide an ABSOLUTE path!")
     
     # Non-required params
     parser.add_argument("--encoder_max_len", type=int, default=256, 
                         help="Max number of tokens the encoder can process.")
     
-    parser.add_argument("--num_train_epochs", default=3, type=int, 
+    parser.add_argument("--num_train_epochs", default=5, type=int, 
                         help="Number of training epochs.")
     parser.add_argument("--per_device_batch_size", default=16, type=int,
                         help="Batch size per GPU for training and validation.")
@@ -189,12 +183,6 @@ def main():
                         help="Whether to use distributed setup (multiple GPUs) for training.")
     
     args = parser.parse_args()
-
-    if args.train_data.split('.')[-1] != 'csv':
-        raise ValueError("Training data file must be csv.")
-    
-    if args.validation_data.split('.')[-1] != 'csv':
-        raise ValueError("Validation data file must be csv.")
     
     n_gpus = torch.cuda.device_count()
 
@@ -217,21 +205,13 @@ def main():
     
     args.device = device
 
-    # Set up output files and sub-directories
-    if not args.output_dir.endswith('/'):
-        args.output_dir += "/"
+    # Set up output files
+    os.makedirs(args.output_dir, exist_ok=True)
 
-    args.checkpt_dir = args.output_dir + "checkpoints/"
-    args.model_config_dir = args.output_dir + "model_config/"
-    args.results_dir = args.output_dir + "output_files/"
-
-    checkpt_file = args.checkpt_dir + "checkpoint.pt"
-    logging_file = args.results_dir + "output.log"
-    train_synopsis_file = args.results_dir + "train_synopsis.out"
-    
-    os.makedirs(args.checkpt_dir, exist_ok=True)
-    os.makedirs(args.model_config_dir, exist_ok=True)
-    os.makedirs(args.results_dir, exist_ok=True)
+    checkpt_file = os.path.join(args.output_dir, "checkpoint.pt")
+    model_file = os.path.join(args.output_dir, "model.pt")
+    logging_file = os.path.join(args.output_dir, "output.log")
+    train_synopsis_file = os.path.join(args.output_dir, "train_synopsis.out")
 
     # Setup logging
     args.logger = logging.getLogger(__name__)
@@ -246,9 +226,6 @@ def main():
         if args.local_rank == 0:
             print(f"{args.n_gpus} GPU(s) available for training!\n")
             args.logger.info(f"{args.n_gpus} GPU(s) available for training!\n")
-
-        print(f"transformers: v. {transformers.__version__}\n")
-        args.logger.info(f"transformers: v. {transformers.__version__}\n")
 
         print(f"Command line arguments:")
         args.logger.info(f"Command line arguments:")
@@ -285,8 +262,8 @@ def main():
         if args.local_rank != 0:
             torch.distributed.barrier()
     
-    train_data = EsnliDataset(args.train_data, rows=args.num_train_samples)
-    validation_data = EsnliDataset(args.validation_data, rows=args.num_eval_samples)
+    train_data = EsnliDataset("train", rows=args.num_train_samples)
+    validation_data = EsnliDataset("validation", rows=args.num_eval_samples)
 
     if args.use_distributed_training:
         # End of barrier
@@ -313,8 +290,8 @@ def main():
     start_epoch = 0 
     best_validation_acc = 0
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-05)
-    criterion = nn.CrossEntropyLoss(reduction='mean')
+    optimizer = Adam(model.parameters(), lr=1e-05)
+    criterion = CrossEntropyLoss(reduction='mean')
 
     if args.use_distributed_training:
         # Barrier to make sure that only process 0 checks for existing model checkpoints and performs logging
@@ -331,7 +308,6 @@ def main():
         args.logger.info(f"Gradient Accumulation steps: {args.gradient_accumulation_steps}\n")
 
         if os.path.exists(checkpt_file):
-            ###### CHECK THAT AGAIN LATER! ######
             if args.device == torch.device("cpu"):
                 checkpoint = torch.load(checkpt_file, map_location=args.device)
             else:
@@ -386,7 +362,7 @@ def main():
                 torch.distributed.barrier()
 
         if args.local_rank in [-1, 0]:
-            val_results_dict = evaluate_epoch(
+            val_results_dict = validate(
                 model, 
                 tokenizer, 
                 validation_dataloader, 
@@ -422,16 +398,14 @@ def main():
             
             if val_acc > best_validation_acc:
                 args.logger.info("NEW BEST MODEL FOUND\n")
-                args.logger.info(f"SAVING CURRENT BEST MODEL TO: {args.model_config_dir}\n")
+                args.logger.info(f"SAVING CURRENT BEST MODEL TO: {model_file}\n")
 
                 model_dict = {
                     'model_state_dict': checkpt_dict['model_state_dict'],
                     'args': args
                 }
 
-                torch.save(model_dict, f"{args.output_dir}/model.pt")
-
-                # model.save_pretrained(args.model_config_dir)
+                torch.save(model_dict, model_file)
 
                 best_validation_acc = val_acc
         

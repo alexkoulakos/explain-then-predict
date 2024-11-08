@@ -1,0 +1,11 @@
+# Ignore virtual environment
+/venv/
+
+# Ignore Python cache directories
+__pycache__/
+
+# Ignore foo.py file
+/foo.py
+
+# Ignore all shell script files
+*.sh

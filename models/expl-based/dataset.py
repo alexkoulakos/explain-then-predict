@@ -1,25 +1,29 @@
-import pandas as pd
+import datasets
 
 from torch.utils.data import Dataset
 
 class EsnliDataset(Dataset):
-    def __init__(self, data_path, rows=-1):
-        if rows == -1:
-            self.df = pd.read_csv(data_path)
-        else:
-            self.df = pd.read_csv(data_path)[:rows]
+    def __init__(self, split, rows=-1):
+        self.esnli = datasets.load_dataset(
+            "esnli", 
+            split=split,
+            trust_remote_code=True
+        ).filter(lambda example: example['label'] in [0, 1, 2])
+
+        if rows != -1:
+            self.esnli = self.esnli[:rows]
     
     def __len__(self):
-        return len(self.df)
+        return len(self.esnli)
     
     def __getitem__(self, index):
-        premise = self.df['premise'][index].lower()
-        hypothesis = self.df['hypothesis'][index].lower()
-        explanation_1 = self.df['explanation_1'][index].lower()
+        premise = self.esnli['premise'][index].lower()
+        hypothesis = self.esnli['hypothesis'][index].lower()
+        explanation_1 = self.esnli['explanation_1'][index].lower()
 
-        if 'explanation_2' in self.df.keys():
-            explanation_2 = self.df['explanation_2'][index].lower()
-            explanation_3 = self.df['explanation_3'][index].lower()
+        if 'explanation_2' in self.esnli.keys():
+            explanation_2 = self.esnli['explanation_2'][index].lower()
+            explanation_3 = self.esnli['explanation_3'][index].lower()
 
             return {
                 'premise': premise,
@@ -27,12 +31,12 @@ class EsnliDataset(Dataset):
                 'explanation_1': explanation_1,
                 'explanation_2': explanation_2,
                 'explanation_3': explanation_3,
-                'label': self.df['label'][index]
+                'label': self.esnli['label'][index]
             }
         else:
             return {
                 'premise': premise,
                 'hypothesis': hypothesis,
                 'explanation_1': explanation_1,
-                'label': self.df['label'][index]
+                'label': self.esnli['label'][index]
             }

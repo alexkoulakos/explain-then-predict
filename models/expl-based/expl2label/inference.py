@@ -1,6 +1,4 @@
 import torch
-import datasets
-import transformers
 import argparse
 import logging
 import os
@@ -13,8 +11,10 @@ from torch.utils.data import DataLoader, SequentialSampler
 
 sys.path.append("../")
 
+from model import Expl2LabelModel
+from tokenizer import Expl2LabelTokenizer
+from helpers import *
 from dataset import EsnliDataset
-from helpers import Expl2LabelModel, Expl2LabelTokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -29,20 +29,18 @@ if __name__ == '__main__':
     # Required params
     parser.add_argument("--trained_model", type=str, required=True, 
                         help="Path to fine-tuned model file.")
-    parser.add_argument("--test_data", default=None, type=str, required=True, 
-                        help="Path to test data csv file.")
     
     parser.add_argument("--encoder_checkpt", required=True, type=str, 
                         help="Encoder checkpoint for the fine-tuned encoder part.")
     
     parser.add_argument("--output_dir", type=str, required=True,
-                        help="Directory to store output files.")
+                        help="Directory to store output files. NOTE: Please, provide an ABSOLUTE path!")
 
     # Non-required params
     parser.add_argument("--encoder_max_len", type=int, default=128, 
                         help="Max number of tokens the encoder can process.")
     
-    parser.add_argument("--batch_size", type=int, default=32, 
+    parser.add_argument("--batch_size", type=int, default=16, 
                         help="Batch size for testing.")
     parser.add_argument("--num_samples", type=int, default=-1, 
                         help="Number of samples to use for testing (-1 corresponds to the entire test set).")
@@ -52,9 +50,6 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    if args.test_data.split('.')[-1] != 'csv':
-        raise ValueError("Test data file must be csv.")
-
     args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     if args.device == torch.device('cpu'):
@@ -63,28 +58,22 @@ if __name__ == '__main__':
         model_args = torch.load(args.trained_model)['args']
     
     # Set up output files
-    if not args.output_dir.endswith('/'):
-        args.output_dir += "/"
+    os.makedirs(args.output_dir, exist_ok=True)
 
-    scores_file = args.output_dir + "scores.out"
-    predictions_file = args.output_dir + "predictions.csv"
+    scores_file = os.path.join(args.output_dir, "scores.out")
+    predictions_file = os.path.join(args.output_dir, "predictions.csv")
 
     if os.path.exists(predictions_file):
         os.remove(predictions_file)
     
     if os.path.exists(scores_file):
         os.remove(scores_file)
-
-    os.makedirs(args.output_dir, exist_ok=True)
     
     # Setup logging
-    logging.basicConfig(filename=f"{args.output_dir}/output.log",
+    logging.basicConfig(filename=os.path.join(args.output_dir, "output.log"),
                         format = '%(asctime)s - %(levelname)s - %(message)s',
                         datefmt = '%m/%d/%Y %H:%M:%S',
                         level = logging.INFO)
-    
-    print(f"transformers: v. {transformers.__version__}\n")
-    logger.info(f"transformers: v. {transformers.__version__}\n")
 
     print(f"Command line arguments:")
     logger.info(f"Command line arguments:")
@@ -112,7 +101,7 @@ if __name__ == '__main__':
         model.load_state_dict(torch.load(args.trained_model)['model_state_dict'])
     
     # Load dataset
-    test_data = EsnliDataset(args.test_data, rows=args.num_samples)
+    test_data = EsnliDataset("test", rows=args.num_samples)
 
     test_dataloader = DataLoader(
         test_data, 
@@ -125,7 +114,6 @@ if __name__ == '__main__':
     # Evaluate model on e-SNLI test data
     model.eval()
 
-    ID2LABEL = {0: 'entailment', 1: 'neutral', 2: 'contradiction'}
     headers = ['explanation', 'gold_label', 'pred_label']
 
     if os.path.exists(predictions_file):

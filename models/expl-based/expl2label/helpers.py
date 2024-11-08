@@ -7,6 +7,8 @@ from logging import Logger
 
 from torch.distributed import init_process_group, destroy_process_group
 
+ID2LABEL = {0: 'entailment', 1: 'neutral', 2: 'contradiction'}
+
 def set_seed(args) -> None:
     """
     Set the random seed across all devices for reproducibility.
@@ -47,15 +49,15 @@ def compute_time(start_time, end_time) -> dict:
 
 def display_training_progress(
         logger: Logger,
-        step, 
-        progress, 
-        loss, 
-        acc, 
-        elapsed_hours, 
-        elapsed_mins, 
-        expl, 
-        gold_label, 
-        pred_label
+        step: int, 
+        progress: float, 
+        loss: float, 
+        acc: float, 
+        elapsed_hours: int, 
+        elapsed_mins: int, 
+        expl: str, 
+        gold_label: int, 
+        pred_label: int
     ) -> None:
     """
     Display training info in order to be able to monitor the training process. 

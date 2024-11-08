@@ -7,7 +7,6 @@ import logging
 import math
 import time
 import sys
-import datasets
 
 from transformers import (
     EncoderDecoderModel, 
@@ -20,24 +19,27 @@ from torch.utils.data import (
     SequentialSampler, 
     RandomSampler
 )
+from torch.optim import AdamW
+from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel
+from typing import Dict
 
 sys.path.append("../")
 
 from tokenizer import Seq2SeqTokenizer
 from helpers import *
-# from dataset import EsnliDataset
+from dataset import EsnliDataset
 
 def train_epoch(
         model: EncoderDecoderModel, 
         tokenizer: Seq2SeqTokenizer, 
         epoch: int, 
         data: DataLoader, 
-        optimizer, 
-        scheduler, 
+        optimizer: AdamW, 
+        scheduler: LambdaLR, 
         args
-    ):
+    ) -> Dict[str, float]:
     """
     Train `model` for an epoch using training `data`.
     Returns a `dict` with the calculated cross-entropy loss and perplexity.
@@ -140,7 +142,7 @@ def validate(
         data: DataLoader, 
         generation_config: GenerationConfig,
         args
-    ) -> dict:
+    ) -> Dict[str, float]:
     """
     Evaluate model using validation `data`.
     Returns a `dict` with the calculated evaluation metrics.
@@ -209,11 +211,6 @@ def validate(
                     attention_mask=attention_mask,
                     generation_config=generation_config
                 )
-            
-            """unprocessed_expls = tokenizer.batch_decode(output_ids)
-
-            # Truncate to the first complete and meaningful sentence
-            pred_expls = truncate_pred_expls(unprocessed_expls)"""
 
             pred_expls = tokenizer.batch_decode(output_ids)
 
@@ -242,13 +239,8 @@ def main():
     parser.add_argument("--decoder_checkpt", required=True, type=str, 
                         help="Decoder checkpoint for weights initialization.")
     
-    parser.add_argument("--generation_config", required=True, type=str, 
+    parser.add_argument("--generation_config_file", required=True, type=str, 
                         help="Path to json file that contains the parameters for generation during model validation.")
-    
-    """parser.add_argument("--train_data", type=str, required=True,
-                        help="Path to training data csv file.")
-    parser.add_argument("--validation_data", type=str, required=True,
-                        help="Path to validation data csv file.")"""
     
     parser.add_argument("--validation_metric", type=str, required=True,
                         help="Metric to use for model validation. Metric must be exactly one of: ppl, bleu, meteor, rouge_1, rouge_2, bert")
@@ -298,17 +290,18 @@ def main():
                         help="Whether to remove punctuation when calculating text generation metrics.")
     
     args = parser.parse_args()
-
-    """if args.train_data.split('.')[-1] != 'csv':
-        raise ValueError("Training data file must be in csv format.")
     
-    if args.validation_data.split('.')[-1] != 'csv':
-        raise ValueError("Validation data file must be in csv format.")"""
-    
-    if args.generation_config.split('.')[-1] != 'json':
+    if args.generation_config_file.split('.')[-1] != 'json':
         raise ValueError("Generation config file must be in json format.")
     
-    assert args.validation_metric in ['ppl', 'bleu', 'meteor', 'rouge_1', 'rouge_2', 'bert'], "Please provide a valid metric for model validation. Valid metrics are: ppl, bleu, meteor, rouge_1, rouge_2, bert."
+    assert args.validation_metric in [
+        'ppl', 
+        'bleu', 
+        'meteor', 
+        'rouge_1', 
+        'rouge_2', 
+        'bert'
+    ], "Please provide a valid metric for model validation. Valid metrics are: ppl, bleu, meteor, rouge_1, rouge_2, bert."
 
     n_gpus = torch.cuda.device_count()
 
@@ -332,20 +325,15 @@ def main():
     args.device = device
 
     # Set up output files and sub-directories
-    if not args.output_dir.endswith('/'):
-        args.output_dir += "/"
+    os.makedirs(args.output_dir, exist_ok=True)
 
-    args.checkpt_dir = args.output_dir + "checkpoints/"
-    args.model_config_dir = args.output_dir + "model/"
-    args.results_dir = args.output_dir + "output_files/"
+    checkpt_file = os.path.join(args.output_dir, "checkpoint.pt")
+    logging_file = os.path.join(args.output_dir, "output.log")
+    train_synopsis_file = os.path.join(args.output_dir, "train_synopsis.out")
 
-    checkpt_file = args.checkpt_dir + "checkpoint.pt"
-    logging_file = args.results_dir + "output.log"
-    train_synopsis_file = args.results_dir + "synopsis.out"
+    model_config_dir = os.path.join(args.output_dir, "model")
     
-    os.makedirs(args.checkpt_dir, exist_ok=True)
-    os.makedirs(args.model_config_dir, exist_ok=True)
-    os.makedirs(args.results_dir, exist_ok=True)
+    os.makedirs(model_config_dir, exist_ok=True)
     
     # Setup logging
     args.logger = logging.getLogger(__name__)
@@ -359,9 +347,6 @@ def main():
     if args.local_rank in [-1, 0]:
         if args.local_rank == 0:
             args.logger.info(f"{args.n_gpus} GPU(s) available for training!\n")
-        
-        print(f"transformers: v. {transformers.__version__}\n")
-        args.logger.info(f"transformers: v. {transformers.__version__}\n")
 
         print(f"Command line arguments:")
         args.logger.info(f"Command line arguments:")
@@ -397,12 +382,11 @@ def main():
     model.config.decoder_start_token_id = tokenizer.decoder_tokenizer.bos_token_id
     model.config.eos_token_id = tokenizer.decoder_tokenizer.eos_token_id
     model.config.pad_token_id = tokenizer.decoder_tokenizer.pad_token_id
-    model.config.transformers_version = transformers.__version__
 
     model.to(args.device)
 
     # Instantiate GenerationConfig class based on args.generation_config file    
-    with open(args.generation_config) as f:
+    with open(args.generation_config_file) as f:
         config_dict = json.load(f)
     
     if config_dict['early_stopping'] in ['True', 'False']:
@@ -429,18 +413,8 @@ def main():
         if args.local_rank != 0:
             torch.distributed.barrier()
     
-    if args.num_train_samples > 0:
-        train_data = datasets.load_dataset("esnli", split="train").filter(lambda example: example['label'] in [0, 1, 2]).select(range(args.num_train_samples))
-    else:
-        train_data = datasets.load_dataset("esnli", split="train").filter(lambda example: example['label'] in [0, 1, 2])
-    
-    if args.num_eval_samples > 0:
-        validation_data = datasets.load_dataset("esnli", split="validation").filter(lambda example: example['label'] in [0, 1, 2]).select(range(args.num_eval_samples))
-    else:
-        validation_data = datasets.load_dataset("esnli", split="validation").filter(lambda example: example['label'] in [0, 1, 2])
-    
-    """train_data = EsnliDataset(args.train_data, rows=args.num_train_samples)
-    validation_data = EsnliDataset(args.validation_data, rows=args.num_eval_samples)"""
+    train_data = EsnliDataset("train", rows=args.num_train_samples)
+    validation_data = EsnliDataset("validation", rows=args.num_eval_samples)
 
     if args.use_distributed_training:
         # End of barrier
@@ -604,9 +578,9 @@ def main():
             
             if new_best_model_found(current_score, best_score, args.validation_metric):
                 args.logger.info("NEW BEST MODEL FOUND")
-                args.logger.info(f"SAVING CURRENT BEST MODEL TO: {args.model_config_dir}")
+                args.logger.info(f"SAVING CURRENT BEST MODEL TO: {model_config_dir}")
 
-                model.save_pretrained(args.model_config_dir)
+                model.save_pretrained(model_config_dir)
 
                 best_score = current_score
 
