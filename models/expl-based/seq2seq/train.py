@@ -1,6 +1,4 @@
-import json
 import torch
-import transformers
 import argparse
 import os
 import logging
@@ -28,8 +26,9 @@ from typing import Dict
 sys.path.append("../")
 
 from tokenizer import Seq2SeqTokenizer
-from helpers import *
 from dataset import EsnliDataset
+from helpers import *
+from generation_config import GENERATION_CONFIG
 
 def train_epoch(
         model: EncoderDecoderModel, 
@@ -239,8 +238,8 @@ def main():
     parser.add_argument("--decoder_checkpt", required=True, type=str, 
                         help="Decoder checkpoint for weights initialization.")
     
-    parser.add_argument("--generation_config_file", required=True, type=str, 
-                        help="Path to json file that contains the parameters for generation during model validation.")
+    parser.add_argument("--text_generation_strategy", required=True, type=str, 
+                        help="Strategy to use for text generation during model validation. Strategy must be exactly one of: greedy_search, beam_search, top-k_sampling, top-p_sampling")
     
     parser.add_argument("--validation_metric", type=str, required=True,
                         help="Metric to use for model validation. Metric must be exactly one of: ppl, bleu, meteor, rouge_1, rouge_2, bert")
@@ -291,9 +290,13 @@ def main():
     
     args = parser.parse_args()
     
-    if args.generation_config_file.split('.')[-1] != 'json':
-        raise ValueError("Generation config file must be in json format.")
-    
+    assert args.text_generation_strategy in [
+        'greedy_search',
+        'beam_search',
+        'top-k_sampling',
+        'top-p_sampling'
+    ], "Please provide a valid text generation strategy. Valid strategies are: greedy_search, beam_search, top-k_sampling, top-p_sampling"
+
     assert args.validation_metric in [
         'ppl', 
         'bleu', 
@@ -324,7 +327,7 @@ def main():
     
     args.device = device
 
-    # Set up output files and sub-directories
+    # Set up output directory and files
     os.makedirs(args.output_dir, exist_ok=True)
 
     checkpt_file = os.path.join(args.output_dir, "checkpoint.pt")
@@ -385,22 +388,14 @@ def main():
 
     model.to(args.device)
 
-    # Instantiate GenerationConfig class based on args.generation_config file    
-    with open(args.generation_config_file) as f:
-        config_dict = json.load(f)
-    
-    if config_dict['early_stopping'] in ['True', 'False']:
-        config_dict['early_stopping'] = eval(config_dict['early_stopping'])
-    
-    config_dict['do_sample'] = eval(config_dict['do_sample'])
-    
-    if config_dict['penalty_alpha'] == 'None':
-        config_dict['penalty_alpha'] = None
+    # args.text_generation_strategy points to the corresponding entry of GENERATION_CONFIG
+    config_dict = GENERATION_CONFIG[args.text_generation_strategy]
 
     config_dict['decoder_start_token_id'] = tokenizer.decoder_tokenizer.bos_token_id
     config_dict['eos_token_id'] = tokenizer.decoder_tokenizer.eos_token_id
     config_dict['pad_token_id'] = tokenizer.decoder_tokenizer.pad_token_id
 
+    # Instantiate GenerationConfig class based on config_dict
     generation_config = GenerationConfig(**config_dict)
 
     if args.use_distributed_training:
@@ -472,7 +467,6 @@ def main():
         args.logger.info(f"Gradient Accumulation steps: {args.gradient_accumulation_steps}\n")
 
         if os.path.exists(checkpt_file):
-            ###### CHECK THAT AGAIN LATER! ######
             if args.device == torch.device("cpu"):
                 checkpoint = torch.load(checkpt_file, map_location=args.device)
             else:

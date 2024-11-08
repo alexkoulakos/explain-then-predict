@@ -42,7 +42,7 @@ if __name__ == '__main__':
     
     parser.add_argument("--batch_size", type=int, default=16, 
                         help="Batch size for testing.")
-    parser.add_argument("--num_samples", type=int, default=-1, 
+    parser.add_argument("--num_test_samples", type=int, default=-1, 
                         help="Number of samples to use for testing (-1 corresponds to the entire test set).")
     
     parser.add_argument('--seed', type=int, default=123,
@@ -57,20 +57,15 @@ if __name__ == '__main__':
     else:
         model_args = torch.load(args.trained_model)['args']
     
-    # Set up output files
+    # Set up output directory and files
     os.makedirs(args.output_dir, exist_ok=True)
 
     scores_file = os.path.join(args.output_dir, "scores.out")
     predictions_file = os.path.join(args.output_dir, "predictions.csv")
-
-    if os.path.exists(predictions_file):
-        os.remove(predictions_file)
-    
-    if os.path.exists(scores_file):
-        os.remove(scores_file)
+    logging_file = os.path.join(args.output_dir, "output.log")
     
     # Setup logging
-    logging.basicConfig(filename=os.path.join(args.output_dir, "output.log"),
+    logging.basicConfig(filename=logging_file,
                         format = '%(asctime)s - %(levelname)s - %(message)s',
                         datefmt = '%m/%d/%Y %H:%M:%S',
                         level = logging.INFO)
@@ -101,7 +96,7 @@ if __name__ == '__main__':
         model.load_state_dict(torch.load(args.trained_model)['model_state_dict'])
     
     # Load dataset
-    test_data = EsnliDataset("test", rows=args.num_samples)
+    test_data = EsnliDataset("test", rows=args.num_test_samples)
 
     test_dataloader = DataLoader(
         test_data, 
@@ -122,7 +117,7 @@ if __name__ == '__main__':
     if os.path.exists(predictions_file):
         os.remove(predictions_file)
 
-    csv_file = open(predictions_file, 'x')
+    csv_file = open(predictions_file, mode='x', newline='')
     writer = csv.writer(csv_file)
     writer.writerow(headers)
     

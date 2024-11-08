@@ -1,11 +1,9 @@
 import torch
 import argparse
-import transformers
 import csv
 import logging
 import os
 import sys
-import json
 
 from torch.utils.data import DataLoader, SequentialSampler
 from transformers import EncoderDecoderModel, GenerationConfig
@@ -15,9 +13,7 @@ sys.path.append("../")
 from tokenizer import Seq2SeqTokenizer
 from helpers import *
 from dataset import EsnliDataset
-
-ID2LABEL = {0: 'entailment', 1: 'neutral', 2: 'contradiction'}
-LABEL2ID = {'entailment': 0, 'neutral': 1, 'contradiction': 2}
+from generation_config import GENERATION_CONFIG
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -26,11 +22,8 @@ if __name__ == '__main__':
     parser.add_argument("--trained_model", type=str, required=True, 
                         help="Path to the fine-tuned encoder-decoder model directory.")
     
-    parser.add_argument("--generation_config", required=True, type=str, 
-                        help="Path to json file that contains the generation parameters for model evaluation.")
-    
-    parser.add_argument("--test_data", default=None, type=str, required=True, 
-                        help="Path to test data csv file.")
+    parser.add_argument("--text_generation_strategy", required=True, type=str, 
+                        help="Strategy to use for text generation during model validation. Strategy must be exactly one of: greedy_search, beam_search, top-k_sampling, top-p_sampling")
     
     parser.add_argument("--output_dir", type=str, required=True,
                         help="Directory to store output files.")
@@ -43,7 +36,7 @@ if __name__ == '__main__':
     
     parser.add_argument("--batch_size", type=int, default=16, 
                         help="Batch size for testing.")
-    parser.add_argument("--num_samples", type=int, default=-1, 
+    parser.add_argument("--num_test_samples", type=int, default=-1, 
                         help="Number of samples to use for testing (-1 corresponds to the entire test set).")
     
     parser.add_argument("--remove_punctuation", action="store_true",
@@ -54,39 +47,29 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    if args.test_data.split('.')[-1] != 'csv':
-        raise ValueError("Test data file must be in csv format.")
-    
-    if args.generation_config.split('.')[-1] != 'json':
-        raise ValueError("Generation config file must be in json format.")
+    assert args.text_generation_strategy in [
+        'greedy_search',
+        'beam_search',
+        'top-k_sampling',
+        'top-p_sampling'
+    ], "Please provide a valid text generation strategy. Valid strategies are: greedy_search, beam_search, top-k_sampling, top-p_sampling"
 
     args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Set up output files
-    if not args.output_dir.endswith('/'):
-        args.output_dir += "/"
-
-    scores_file = args.output_dir + "scores.out"
-    predictions_file = args.output_dir + "predictions.csv"
-
-    if os.path.exists(predictions_file):
-        os.remove(predictions_file)
-    
-    if os.path.exists(scores_file):
-        os.remove(scores_file)
-
+    # Set up output directory and files
     os.makedirs(args.output_dir, exist_ok=True)
+
+    scores_file = os.path.join(args.output_dir, "scores.out")
+    predictions_file = os.path.join(args.output_dir, "predictions.csv")
+    logging_file = os.path.join(args.output_dir, "output.log")
     
     # Setup logging
     args.logger = logging.getLogger(__name__)
 
-    logging.basicConfig(filename=f"{args.output_dir}/output.log",
+    logging.basicConfig(filename=logging_file,
                         format = '%(asctime)s - %(levelname)s - %(message)s',
                         datefmt = '%m/%d/%Y %H:%M:%S',
                         level = logging.INFO)
-    
-    print(f"transformers: v. {transformers.__version__}\n")
-    args.logger.info(f"transformers: v. {transformers.__version__}\n")
 
     print(f"Command line arguments:")
     args.logger.info(f"Command line arguments:")
@@ -119,26 +102,18 @@ if __name__ == '__main__':
         args.decoder_max_len
     )
 
-    # Instantiate GenerationConfig class based on args.generation_config file    
-    with open(args.generation_config) as f:
-        config_dict = json.load(f)
-    
-    if config_dict['early_stopping'] in ['True', 'False']:
-        config_dict['early_stopping'] = eval(config_dict['early_stopping'])
-    
-    config_dict['do_sample'] = eval(config_dict['do_sample'])
-    
-    if config_dict['penalty_alpha'] == 'None':
-        config_dict['penalty_alpha'] = None
+    # args.text_generation_strategy points to the corresponding entry of GENERATION_CONFIG
+    config_dict = GENERATION_CONFIG[args.text_generation_strategy]
 
     config_dict['decoder_start_token_id'] = tokenizer.decoder_tokenizer.bos_token_id
     config_dict['eos_token_id'] = tokenizer.decoder_tokenizer.eos_token_id
     config_dict['pad_token_id'] = tokenizer.decoder_tokenizer.pad_token_id
 
+    # Instantiate GenerationConfig class based on config_dict
     generation_config = GenerationConfig(**config_dict)
 
     # Load dataset
-    test_data = EsnliDataset(args.test_data, rows=args.num_samples)
+    test_data = EsnliDataset("test", rows=args.num_test_samples)
 
     test_dataloader = DataLoader(
         test_data, 
@@ -153,7 +128,7 @@ if __name__ == '__main__':
 
     headers = ['premise', 'hypothesis', 'label', 'pred_explanation', 'explanation_1', 'explanation_2', 'explanation_3']
 
-    csv_file = open(predictions_file, 'x')
+    csv_file = open(predictions_file, mode='x', newline='')
     writer = csv.writer(csv_file)
     writer.writerow(headers)
     
@@ -169,15 +144,14 @@ if __name__ == '__main__':
                 attention_mask=attention_mask,
                 generation_config=generation_config
             )
-            
-            """# Truncate to the first complete and meaningful sentence
-            pred_expls = truncate_pred_expls(tokenizer.batch_decode(output_ids))"""
 
             pred_expls = tokenizer.batch_decode(output_ids)
 
             gold_labels = batch['label'].to(args.device)
 
             for i in range(len(pred_expls)):
+                # pred_expls[i] = pred_expls[i].replace('\n', '')
+
                 row = []
 
                 row.append(batch['premise'][i])

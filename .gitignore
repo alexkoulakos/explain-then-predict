@@ -1,6 +1,9 @@
 # Ignore virtual environment
 /venv/
 
+# Ignore 'outputs' directory
+outputs/
+
 # Ignore Python cache directories
 __pycache__/
 

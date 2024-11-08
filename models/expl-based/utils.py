@@ -7,6 +7,9 @@ import evaluate
 
 from typing import List
 
+ID2LABEL = {0: 'entailment', 1: 'neutral', 2: 'contradiction'}
+LABEL2ID = {'entailment': 0, 'neutral': 1, 'contradiction': 2}
+
 def set_seed(args) -> None:
     """
     Set the random seed for reproducibility.

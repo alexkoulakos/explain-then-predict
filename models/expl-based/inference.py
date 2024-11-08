@@ -12,6 +12,7 @@ from transformers import AutoTokenizer, GenerationConfig
 from model import ExplainThenPredictModel
 from utils import *
 from dataset import EsnliDataset
+from generation_config import GENERATION_CONFIG
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -22,11 +23,8 @@ if __name__ == '__main__':
     parser.add_argument("--expl2label_model", type=str, required=True, 
                         help="Path to the fine-tuned classifier model file.")
     
-    parser.add_argument("--generation_config_dir", required=True, type=str, 
-                        help="Path to directory that contains the generatoon config files for model evaluation.")
-    
-    parser.add_argument("--test_data", default=None, type=str, required=True, 
-                        help="Path to test data csv file.")
+    parser.add_argument("--text_generation_strategy", required=True, type=str, 
+                        help="Strategy to use for text generation during model validation. Strategy must be exactly one of: greedy_search, beam_search, top-k_sampling, top-p_sampling")
     
     parser.add_argument("--output_dir", type=str, required=True,
                         help="Directory to store output files.")
@@ -37,7 +35,7 @@ if __name__ == '__main__':
     
     parser.add_argument("--batch_size", type=int, default=32, 
                         help="Batch size for testing.")
-    parser.add_argument("--num_samples", type=int, default=-1, 
+    parser.add_argument("--num_test_samples", type=int, default=-1, 
                         help="Number of samples to use for testing (-1 corresponds to the entire test set).")
     
     parser.add_argument("--remove_punctuation", action="store_true",
@@ -47,6 +45,13 @@ if __name__ == '__main__':
                         help="Random seed for initialization.")
 
     args = parser.parse_args()
+
+    assert args.text_generation_strategy in [
+        'greedy_search',
+        'beam_search',
+        'top-k_sampling',
+        'top-p_sampling'
+    ], "Please provide a valid text generation strategy. Valid strategies are: greedy_search, beam_search, top-k_sampling, top-p_sampling"
     
     args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
@@ -61,7 +66,7 @@ if __name__ == '__main__':
     tokenizer = AutoTokenizer.from_pretrained(model.seq2seq_model.config.encoder._name_or_path)
 
     # Load dataset
-    test_data = EsnliDataset(args.test_data, rows=args.num_samples)
+    test_data = EsnliDataset("test", rows=args.num_test_samples)
 
     test_dataloader = DataLoader(
         test_data, 
@@ -71,25 +76,20 @@ if __name__ == '__main__':
         sampler=SequentialSampler(test_data)
     )
 
-    # Set up output files and directories
-    if not args.output_dir.endswith('/'):
-        args.output_dir += "/"
-    
-    if not args.generation_config_dir.endswith('/'):
-        args.generation_config_dir += "/"
-
+    # Set up output directory and files
     os.makedirs(args.output_dir, exist_ok=True)
+
+    scores_file = os.path.join(args.output_dir, "scores.out")
+    predictions_file = os.path.join(args.output_dir, "predictions.csv")
+    logging_file = os.path.join(args.output_dir, "output.log")
 
     # Setup logging
     args.logger = logging.getLogger(__name__)
 
-    logging.basicConfig(filename=f"{args.output_dir}/output.log",
+    logging.basicConfig(filename=logging_file,
                         format = '%(asctime)s - %(levelname)s - %(message)s',
                         datefmt = '%m/%d/%Y %H:%M:%S',
                         level = logging.INFO)
-    
-    print(f"transformers: v. {transformers.__version__}\n")
-    args.logger.info(f"transformers: v. {transformers.__version__}\n")
 
     print(f"Command line arguments:")
     args.logger.info(f"Command line arguments:")
@@ -99,119 +99,92 @@ if __name__ == '__main__':
         print(f"\t{name}: {value}")
         args.logger.info(f"\t{name}: {value}")
     
-    # Get all generation config files in the given directory
-    generation_config_files = [filename for filename in os.listdir(args.generation_config_dir) if os.path.isfile(os.path.join(args.generation_config_dir, filename))]
+    # args.text_generation_strategy points to the corresponding entry of GENERATION_CONFIG
+    config_dict = GENERATION_CONFIG[args.text_generation_strategy]
 
-    for generation_config_file in generation_config_files:
-        os.makedirs(args.output_dir + generation_config_file, exist_ok=True)
+    # Instantiate GenerationConfig class based on config_dict
+    generation_config = GenerationConfig(**config_dict)
 
-        scores_file = args.output_dir + generation_config_file + "/scores.out"
-        predictions_file = args.output_dir + generation_config_file + "/predictions.csv"
+    # Evaluate ExplainThenPredict model on e-SNLI test data
+    headers = [
+        'premise', 
+        'hypothesis', 
+        'pred_explanation', 
+        'pred_label', 
+        'explanation_1', 
+        'explanation_2', 
+        'explanation_3', 
+        'gold_label'
+    ]
 
-        if os.path.exists(predictions_file):
-            os.remove(predictions_file)
-        
-        if os.path.exists(scores_file):
-            os.remove(scores_file)
+    csv_file = open(predictions_file, mode='x', newline='')
+    writer = csv.writer(csv_file)
+    writer.writerow(headers)
 
-        # Instantiate GenerationConfig class based on generation config file    
-        with open(args.generation_config_dir + generation_config_file) as f:
-            config_dict = json.load(f)
-        
-        if config_dict['early_stopping'] in ['True', 'False']:
-            config_dict['early_stopping'] = eval(config_dict['early_stopping'])
-        
-        config_dict['do_sample'] = eval(config_dict['do_sample'])
-        
-        if config_dict['penalty_alpha'] == 'None':
-            config_dict['penalty_alpha'] = None
-        
-        generation_config = GenerationConfig(**config_dict)
+    with torch.no_grad():
+        for step, batch in enumerate(test_dataloader, 1):
+            encoder_input = tokenizer(
+                batch['premise'], 
+                batch['hypothesis'],
+                padding='max_length', 
+                max_length=args.encoder_max_len, 
+                truncation=True, 
+                add_special_tokens=True,
+                return_tensors='pt'
+            )
+            
+            input_ids = encoder_input['input_ids']
+            attention_mask = encoder_input['attention_mask']
 
-        # Evaluate ExplainThenPredict model on e-SNLI test data
+            pred_expls, pred_labels = model(input_ids, attention_mask, generation_config)
 
-        headers = [
-            'premise', 
-            'hypothesis', 
-            'pred_explanation', 
-            'pred_label', 
-            'explanation_1', 
-            'explanation_2', 
-            'explanation_3', 
-            'gold_label'
-        ]
+            pred_labels = pred_labels.argmax(dim=-1)
+            gold_labels = batch['label'].to(args.device)
+                        
+            for i in range(len(pred_expls)):
+                row = []
 
-        csv_file = open(predictions_file, 'x')
-        writer = csv.writer(csv_file)
-        writer.writerow(headers)
+                row.append(batch['premise'][i])
+                row.append(batch['hypothesis'][i])
+                row.append(pred_expls[i])
+                row.append(ID2LABEL[pred_labels[i].item()])
+                row.append(batch['explanation_1'][i])
+                row.append(batch['explanation_2'][i])
+                row.append(batch['explanation_3'][i])
+                row.append(ID2LABEL[gold_labels[i].item()])
 
-        ID2LABEL = {0: 'entailment', 1: 'neutral', 2: 'contradiction'}
-        LABEL2ID = {'entailment': 0, 'neutral': 1, 'contradiction': 2}
+                writer.writerow(row)
 
-        with torch.no_grad():
-            for step, batch in enumerate(test_dataloader, 1):
-                encoder_input = tokenizer(
-                    batch['premise'], 
-                    batch['hypothesis'],
-                    padding='max_length', 
-                    max_length=args.encoder_max_len, 
-                    truncation=True, 
-                    add_special_tokens=True,
-                    return_tensors='pt'
-                )
-                
-                input_ids = encoder_input['input_ids']
-                attention_mask = encoder_input['attention_mask']
+    csv_file.close()
+    
+    sentences_dict = preprocess(predictions_file, args)
+    predictions = sentences_dict['predictions']
+    references = sentences_dict['references']
 
-                pred_expls, pred_labels = model(input_ids, attention_mask, generation_config)
+    nlg_metrics_dict = compute_nlg_metrics(predictions, references)
 
-                pred_labels = pred_labels.argmax(dim=-1)
-                gold_labels = batch['label'].to(args.device)
-                            
-                for i in range(len(pred_expls)):
-                    row = []
+    bleu_score = nlg_metrics_dict['bleu_score']
+    meteor_score = nlg_metrics_dict['meteor_score']
+    rouge_1_score, rouge_2_score = nlg_metrics_dict['rouge_1_score'], nlg_metrics_dict['rouge_2_score']
+    bert_score = nlg_metrics_dict['bert_score']
 
-                    row.append(batch['premise'][i])
-                    row.append(batch['hypothesis'][i])
-                    row.append(pred_expls[i])
-                    row.append(ID2LABEL[pred_labels[i].item()])
-                    row.append(batch['explanation_1'][i])
-                    row.append(batch['explanation_2'][i])
-                    row.append(batch['explanation_3'][i])
-                    row.append(ID2LABEL[gold_labels[i].item()])
+    acc_dict = compute_acc(predictions_file, ID2LABEL, LABEL2ID)
 
-                    writer.writerow(row)
+    entailment_acc = acc_dict['entailment']
+    contradiction_acc = acc_dict['contradiction']
+    neutral_acc = acc_dict['neutral']
+    acc = acc_dict['total']
 
-        csv_file.close()
-        
-        sentences_dict = preprocess(predictions_file, args)
-        predictions = sentences_dict['predictions']
-        references = sentences_dict['references']
+    with open(scores_file, 'w') as f:
+        f.write('==================== NLG metrics ======================\n')
+        f.write(f'BLEU score: {bleu_score:.4f}\n')
+        f.write(f'METEOR score: {meteor_score:.4f}\n')
+        f.write(f'ROUGE-1 score: {rouge_1_score:.4f}\n')
+        f.write(f'ROUGE-2 score: {rouge_1_score:.4f}\n')
+        f.write(f'BERT score: {bert_score:.4f}\n\n')
 
-        nlg_metrics_dict = compute_nlg_metrics(predictions, references)
-
-        bleu_score = nlg_metrics_dict['bleu_score']
-        meteor_score = nlg_metrics_dict['meteor_score']
-        rouge_1_score, rouge_2_score = nlg_metrics_dict['rouge_1_score'], nlg_metrics_dict['rouge_2_score']
-        bert_score = nlg_metrics_dict['bert_score']
-
-        acc_dict = compute_acc(predictions_file, ID2LABEL, LABEL2ID)
-
-        entailment_acc = acc_dict['entailment']
-        contradiction_acc = acc_dict['contradiction']
-        neutral_acc = acc_dict['neutral']
-        acc = acc_dict['total']
-
-        with open(scores_file, 'w') as f:
-            f.write('==================== NLG metrics ======================\n')
-            f.write(f'BLEU score: {bleu_score:.4f}\n')
-            f.write(f'METEOR score: {meteor_score:.4f}\n')
-            f.write(f'ROUGE-1 score: {rouge_1_score:.4f}\n')
-            f.write(f'ROUGE-2 score: {rouge_1_score:.4f}\n')
-            f.write(f'BERT score: {bert_score:.4f}\n\n')
-
-            f.write('================ Classification metrics ===============\n')
-            f.write(f'Total accuracy: {acc:.4f}\n')
-            f.write(f'Entailment class accuracy: {entailment_acc:.4f}\n')
-            f.write(f'Contradiction class accuracy: {contradiction_acc:.4f}\n')
-            f.write(f'Neutral class accuracy: {neutral_acc:.4f}\n')
+        f.write('================ Classification metrics ===============\n')
+        f.write(f'Total accuracy: {acc:.4f}\n')
+        f.write(f'Entailment class accuracy: {entailment_acc:.4f}\n')
+        f.write(f'Contradiction class accuracy: {contradiction_acc:.4f}\n')
+        f.write(f'Neutral class accuracy: {neutral_acc:.4f}\n')

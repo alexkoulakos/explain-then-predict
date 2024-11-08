@@ -11,6 +11,9 @@ from logging import Logger
 
 from torch.distributed import init_process_group, destroy_process_group
 
+ID2LABEL = {0: 'entailment', 1: 'neutral', 2: 'contradiction'}
+LABEL2ID = {'entailment': 0, 'neutral': 1, 'contradiction': 2}
+
 def set_seed(args) -> None:
     """
     Set the random seed across all devices for reproducibility.
