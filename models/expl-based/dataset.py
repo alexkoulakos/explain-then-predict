@@ -14,7 +14,7 @@ class EsnliDataset(Dataset):
             self.esnli = self.esnli[:rows]
     
     def __len__(self):
-        return len(self.esnli)
+        return len(self.esnli['premise'])
     
     def __getitem__(self, index):
         premise = self.esnli['premise'][index].lower()

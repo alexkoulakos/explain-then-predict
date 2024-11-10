@@ -5,7 +5,7 @@ import random
 import re
 import evaluate
 
-from typing import List
+from typing import List, Dict
 
 ID2LABEL = {0: 'entailment', 1: 'neutral', 2: 'contradiction'}
 LABEL2ID = {'entailment': 0, 'neutral': 1, 'contradiction': 2}
@@ -26,13 +26,13 @@ def remove_punctuation(sentences: List[str]) -> List[str]:
     """
     return list(map((lambda x: re.sub(r'[^\w\s]', '', x)), sentences))
 
-def preprocess(pred_file, args) -> dict:
+def preprocess(pred_file: str, encoding: str, args) -> Dict:
     """
     Remove punctuation from predicted and ground truth explanations contained in `pred_file`.
     This is a preliminary step for the accurate calculation of NLG evaluation metrics (METEOR, BLEU, ROUGE, BERTScore).
-    Returns a `dict` with the non-punctuated sentences.
+    Returns a `Dict` with the non-punctuated sentences.
     """
-    df = pd.read_csv(pred_file)
+    df = pd.read_csv(pred_file, encoding=encoding)
 
     predictions = df['pred_explanation']
     expls_1 = df['explanation_1']
@@ -52,10 +52,10 @@ def preprocess(pred_file, args) -> dict:
         'references': references
     }
 
-def compute_nlg_metrics(predictions: List[str], references: List[List[str]]) -> dict:
+def compute_nlg_metrics(predictions: List[str], references: List[List[str]]) -> Dict:
     """
     Compute METEOR, BLEU, ROUGE-1, ROUGE-2 and BERTScore F1 metrics.
-    Returns a `dict` with the calculated metrics.
+    Returns a `Dict` with the calculated metrics.
     """
     bleu = evaluate.load('bleu')
     meteor = evaluate.load('meteor')
@@ -76,14 +76,14 @@ def compute_nlg_metrics(predictions: List[str], references: List[List[str]]) -> 
         'bert_score': bert_score
     }
 
-def convert_labels_to_ids(labels, label2id) -> torch.tensor:
+def convert_labels_to_ids(labels: List[str], label2id: Dict) -> torch.tensor:
     return torch.tensor(list(map(lambda x: label2id[x], labels))).to('cpu')
 
 def compute_acc(
-        pred_file,
-        id2label: dict,
-        label2id: dict
-    ) -> dict:
+        pred_file: str,
+        id2label: Dict,
+        label2id: Dict
+    ) -> Dict:
     df = pd.read_csv(pred_file)
 
     pred_label_ids = convert_labels_to_ids(df['pred_label'], label2id)

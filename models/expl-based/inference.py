@@ -117,7 +117,7 @@ if __name__ == '__main__':
         'gold_label'
     ]
 
-    csv_file = open(predictions_file, mode='x', newline='')
+    csv_file = open(predictions_file, mode='x', newline='', encoding='utf-8')
     writer = csv.writer(csv_file)
     writer.writerow(headers)
 
@@ -157,7 +157,7 @@ if __name__ == '__main__':
 
     csv_file.close()
     
-    sentences_dict = preprocess(predictions_file, args)
+    sentences_dict = preprocess(predictions_file, 'utf-8', args)
     predictions = sentences_dict['predictions']
     references = sentences_dict['references']
 

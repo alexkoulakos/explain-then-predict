@@ -3,6 +3,7 @@ import random
 import numpy as np
 import numpy as np
 
+from typing import Dict
 from logging import Logger
 
 from torch.distributed import init_process_group, destroy_process_group
@@ -33,10 +34,10 @@ def cleanup() -> None:
     """
     destroy_process_group()
 
-def compute_time(start_time, end_time) -> dict:
+def compute_time(start_time: int, end_time: int) -> Dict:
     """
     Calculate elapsed time. Patricularly useful for the calculation of total training time.
-    Returns a `dict` with the elapsed hours and minutes.
+    Returns a `Dict` with the elapsed hours and minutes.
     """
     elapsed_time = end_time - start_time
     elapsed_hours = int(elapsed_time / 3600)

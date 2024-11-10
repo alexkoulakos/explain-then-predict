@@ -115,10 +115,12 @@ if __name__ == '__main__':
     # Load dataset
     test_data = EsnliDataset("test", rows=args.num_test_samples)
 
+    print(len(test_data))
+
     test_dataloader = DataLoader(
         test_data, 
         batch_size=args.batch_size, 
-        pin_memory=True, 
+        # pin_memory=True, 
         shuffle=False, 
         sampler=SequentialSampler(test_data)
     )
@@ -126,14 +128,23 @@ if __name__ == '__main__':
     # Evaluate model on e-SNLI test data
     model.eval()
 
+    print(len(test_dataloader))
+
+    for _, batch in enumerate(test_dataloader, 1):
+        print(f"PREMISE: {batch['premise']}")
+        print(f"HYPOTHESIS: {batch['hypothesis']}")
+
     headers = ['premise', 'hypothesis', 'label', 'pred_explanation', 'explanation_1', 'explanation_2', 'explanation_3']
 
-    csv_file = open(predictions_file, mode='x', newline='')
+    csv_file = open(predictions_file, mode='x', newline='', encoding='utf-8')
     writer = csv.writer(csv_file)
     writer.writerow(headers)
     
     with torch.no_grad():
-        for step, batch in enumerate(test_dataloader, 1):
+        for _, batch in enumerate(test_dataloader, 1):
+            print(f"PREMISE: {batch['premise']}")
+            print(f"HYPOTHESIS: {batch['hypothesis']}")
+
             encoder_input = tokenizer((batch['premise'], batch['hypothesis']))
             input_ids = encoder_input['input_ids'].to(args.device)
             attention_mask = encoder_input['attention_mask'].to(args.device)
@@ -166,7 +177,7 @@ if __name__ == '__main__':
         
         csv_file.close()
         
-        sentences_dict = preprocess(predictions_file, args)
+        sentences_dict = preprocess(predictions_file, 'utf-8', args)
         metrics_dict = compute_metrics(sentences_dict['predictions'], sentences_dict['references'])
 
         bleu_score = metrics_dict['bleu_score']

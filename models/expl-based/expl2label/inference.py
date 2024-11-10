@@ -111,13 +111,7 @@ if __name__ == '__main__':
 
     headers = ['explanation', 'gold_label', 'pred_label']
 
-    if os.path.exists(predictions_file):
-        os.remove(predictions_file)
-
-    if os.path.exists(predictions_file):
-        os.remove(predictions_file)
-
-    csv_file = open(predictions_file, mode='x', newline='')
+    csv_file = open(predictions_file, mode='x', newline='', encoding='utf-8')
     writer = csv.writer(csv_file)
     writer.writerow(headers)
     

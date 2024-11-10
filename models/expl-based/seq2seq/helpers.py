@@ -6,7 +6,7 @@ import re
 import numpy as np
 import pandas as pd
 
-from typing import List
+from typing import List, Dict
 from logging import Logger
 
 from torch.distributed import init_process_group, destroy_process_group
@@ -50,9 +50,6 @@ def shift_tokens_left(input_ids: torch.tensor) -> torch.tensor:
 
     return shifted_input_ids
 
-def truncate_pred_expls(pred_expls: List[str]) -> List[str]:
-    return list(map(lambda x: x.split('.')[0] + '.', pred_expls)) 
-
 def remove_punctuation(sentences: List[str]) -> List[str]:
     """
     Remove punctuation from each sentence in `sentences`.
@@ -61,7 +58,7 @@ def remove_punctuation(sentences: List[str]) -> List[str]:
     """
     return list(map((lambda x: re.sub(r'[^\w\s]', '', x)), sentences))
 
-def compute_time(start_time, end_time) -> dict:
+def compute_time(start_time: int, end_time: int) -> Dict:
     """
     Calculate elapsed time. Patricularly useful for the calculation of total training time.
     Returns a `dict` with the elapsed hours and minutes.
@@ -75,13 +72,13 @@ def compute_time(start_time, end_time) -> dict:
         'elapsed_mins': elapsed_mins
     }
 
-def preprocess(pred_file, args) -> dict:
+def preprocess(pred_file: str, encoding: str, args) -> Dict:
     """
     Remove punctuation from predicted and ground truth explanations contained in `pred_file`.
     This is a preliminary step for the accurate calculation of evaluation metrics (METEOR, BLEU, ROUGE, BERTScore).
     Returns a `dict` with the non-punctuated sentences.
     """
-    df = pd.read_csv(pred_file)
+    df = pd.read_csv(pred_file, encoding=encoding)
 
     predictions = df['pred_explanation']
     expls_1 = df['explanation_1']
@@ -127,16 +124,16 @@ def compute_metrics(predictions: List[str], references: List[List[str]]) -> dict
 
 def display_training_progress(
         logger: Logger, 
-        step, 
-        progress, 
-        loss, 
-        ppl, 
-        elapsed_hours, 
-        elapsed_mins, 
-        premise, 
-        hypothesis, 
-        expl, 
-        decoded_expl
+        step: int, 
+        progress: float, 
+        loss: float, 
+        ppl: float, 
+        elapsed_hours: int, 
+        elapsed_mins: int, 
+        premise: str, 
+        hypothesis: str, 
+        expl: str, 
+        decoded_expl: str
     ) -> None:
     """
     Display training info in order to be able to monitor the training process. 
