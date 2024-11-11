@@ -1,122 +1,77 @@
 import torch
-import torch.nn as nn
-import pandas as pd
+import random
+import numpy as np
+import numpy as np
 
-from torch.utils.data import Dataset
-from transformers import AutoModel, AutoTokenizer
-from textattack.models.wrappers import ModelWrapper
+from typing import Dict
+from logging import Logger
 
-class BertNLIModel(nn.Module):
-    def __init__(self, checkpoint, device):
-        super(BertNLIModel, self).__init__()
+from torch.distributed import init_process_group, destroy_process_group
 
-        self.device = device
+ID2LABEL = {0: 'entailment', 1: 'neutral', 2: 'contradiction'}
 
-        self.encoder = AutoModel.from_pretrained(checkpoint)
-        self.embedding_dim = self.encoder.config.to_dict()['hidden_size']
-        self.output_dim = 3
-        
-        self.classifier = nn.Linear(self.embedding_dim, self.output_dim)
+def set_seed(args) -> None:
+    """
+    Set the random seed across all devices for reproducibility.
+    """
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
     
-    def forward(self, input_ids, attention_mask):
-        input_ids = input_ids.to(self.device)
-        attention_mask = attention_mask.to(self.device)
-        
-        _, embeddings = self.encoder(
-            input_ids,
-            attention_mask,
-            return_dict=False
-        )
+    if args.n_gpus > 0:
+        torch.cuda.manual_seed_all(args.seed)
 
-        label_distributions = self.classifier(embeddings)
-        
-        return label_distributions
+def setup(args) -> None:
+    """
+    Initiate nccl backend for distributed training. 
+    """
+    init_process_group(backend="nccl")
+    torch.cuda.set_device(args.local_rank)
 
-class BertNLITokenizer():
-    def __init__(self, checkpoint, max_length):
-        self.checkpoint = checkpoint
-        self.max_length = max_length 
+def cleanup() -> None:
+    """
+    Kill existing processes that were used in the distributed training. 
+    """
+    destroy_process_group()
 
-        self.tokenizer = AutoTokenizer.from_pretrained(self.checkpoint, use_fast=True)
-    
-    def encode(self, premise, hypothesis):
-        return self.tokenizer(
-            premise,
-            hypothesis,
-            padding='max_length',
-            max_length=self.max_length,
-            truncation=True,
-            add_special_tokens=True,
-            return_tensors='pt'
-        )
-    
-    def __call__(self, premise, hypothesis):
-        return self.encode(premise, hypothesis)
+def compute_time(start_time: int, end_time: int) -> Dict:
+    """
+    Calculate elapsed time. Patricularly useful for the calculation of total training time.
+    Returns a `Dict` with the elapsed minutes and seconds.
+    """
+    elapsed_time = end_time - start_time
+    elapsed_mins = int(elapsed_time / 60)
+    elapsed_secs = int(elapsed_time - (elapsed_mins * 60))
 
-class BertNLIModelWrapper(ModelWrapper):
-    def __init__(self, model, tokenizer):
-        super(BertNLIModelWrapper, self).__init__()
+    return {
+        'elapsed_mins': elapsed_mins,
+        'elapsed_secs': elapsed_secs
+    }
 
-        self.model = model
-        self.tokenizer = tokenizer
-    
-    # inputs: [(premise_1, hypothesis_1), (premise_2, hypothesis_2), ...]
-    def __call__(self, inputs):
-        # print(inputs)
+def display_training_progress(
+        logger: Logger, 
+        device: str, 
+        step: int, 
+        progress: str, 
+        loss: str, 
+        acc: str, 
+        mins_elapsed: int, 
+        secs_elapsed: int, 
+        premise: str, 
+        hypothesis: str, 
+        gold_label: str, 
+        pred_label: str, 
+        mode: str
+    ) -> None:
+    """
+    Display training info in order to be able to monitor the training process. 
+    """
+    assert mode in ['train', 'eval']
 
-        premises, hypotheses = [], []
-
-        for i in range(len(inputs)):
-            if not isinstance(inputs[i], tuple):
-                print(i)
-                premise, hypothesis = inputs[i].split('<SPLT>')
-            else:
-                premise = inputs[i][0]
-                hypothesis = inputs[i][1]
-            
-            premises.append(premise)
-            hypotheses.append(hypothesis)
-
-        encoder_input = self.tokenizer(premises, hypotheses)
-        
-        input_ids = encoder_input['input_ids']
-        attention_mask = encoder_input['attention_mask']
-
-        with torch.no_grad():
-            return self.model(input_ids, attention_mask)
-            
-class EsnliDataset(Dataset):
-    def __init__(self, data_path, rows=-1):
-        if rows == -1:
-            self.df = pd.read_csv(data_path)
-        else:
-            self.df = pd.read_csv(data_path)[:rows]
-    
-    def __len__(self):
-        return len(self.df)
-    
-    def __getitem__(self, index):
-        premise = self.df['premise'][index].lower()
-        hypothesis = self.df['hypothesis'][index].lower()
-        explanation_1 = self.df['explanation_1'][index].lower()
-        label = self.df['label'][index]
-
-        if 'explanation_2' in self.df.keys():
-            explanation_2 = self.df['explanation_2'][index].lower()
-            explanation_3 = self.df['explanation_3'][index].lower()
-
-            return {
-                'premise': premise,
-                'hypothesis': hypothesis,
-                'explanation_1': explanation_1,
-                'explanation_2': explanation_2,
-                'explanation_3': explanation_3,
-                'label': label
-            }
-        else:
-            return {
-                'premise': premise,
-                'hypothesis': hypothesis,
-                'explanation_1': explanation_1,
-                'label': label
-            }
+    logger.info(f"Device: {device}")
+    logger.info(f"iter: {step} | progress: {progress:.2f}%")
+    logger.info(f"avg. {mode} loss: {loss} | avg. {mode} acc: {acc} | time elapsed: {mins_elapsed} mins {secs_elapsed} secs")
+    logger.info(f"PREMISE: {premise}")
+    logger.info(f"HYPOTHESIS: {hypothesis}")
+    logger.info(f"GOLD LABEL: {gold_label}")
+    logger.info(f"PREDICTED LABEL: {pred_label}")

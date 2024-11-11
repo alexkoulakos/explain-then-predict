@@ -2,35 +2,40 @@ import torch
 import argparse
 import logging
 import os
-import transformers
-import random
-import numpy as np
 import csv
 
 from torch.utils.data import DataLoader, SequentialSampler
 
+from model import BertNLIModel
+from tokenizer import BertNLITokenizer
+from dataset import SNLIDataset
 from utils import *
-
-logger = logging.getLogger(__name__)
 
 def set_seed(args):
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
-
+    
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     # Required params
     parser.add_argument("--trained_model_file", type=str, required=True, 
                         help="Path to fine-tuned model file.")
-    parser.add_argument("--data_file", default=None, type=str, required=True, 
-                        help="Path to test data csv file.")
+    
+    parser.add_argument("--encoder_checkpt", required=True, type=str, 
+                        help="Encoder checkpoint for the fine-tuned encoder part.")
+    
+    parser.add_argument("--output_dir", type=str, required=True,
+                        help="Directory to store output files. NOTE: Please, provide an ABSOLUTE path!")
 
     # Non-required params
+    parser.add_argument("--encoder_max_len", type=int, default=128, 
+                        help="Max number of tokens the encoder can process.")
+    
     parser.add_argument("--batch_size", type=int, default=32, 
                         help="Batch size for testing.")
-    parser.add_argument("--num_samples", type=int, default=-1, 
+    parser.add_argument("--num_test_samples", type=int, default=-1, 
                         help="Number of samples to use for testing (-1 corresponds to the entire test set).")
     
     parser.add_argument('--seed', type=int, default=123,
@@ -38,51 +43,39 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    """
-    All trained models are located in directories of the form `./train_results/{encoder_checkpoint}/encoder_max_length_{encoder_max_length}__batch_size_{batch_size}__n_gpus_{n_gpus}/model.pt`.
-    A valid directory example is `./train_results/bert-base-uncased/encoder_max_length_128__batch_size_8__n_gpus_1/model.pt`
-    It is clear that this is a convenient format, because using python built-in split() method, we can extract
-    all the information about the encoder-decoder checkpoints and their corresponding max_lengths and thus at inference
-    time we can load the trained encoder-decoder model automatically, with no hard-coding.
-    """
-    args.encoder_checkpoint =  args.trained_model_file.split('/')[-3]
-    other_params = args.trained_model_file.split('/')[-2]
-    args.encoder_max_length = int(other_params.split('__')[0].split('_')[-1])
+    # Set up output directory and files
+    os.makedirs(args.output_dir, exist_ok=True)
 
-    args.output_dir = f"./inference_results/transformers:{transformers.__version__}/{args.encoder_checkpoint}/{other_params}"
-
-    if not os.path.exists(args.output_dir):
-        os.makedirs(args.output_dir)
+    scores_file = os.path.join(args.output_dir, "scores.out")
+    predictions_file = os.path.join(args.output_dir, "predictions.csv")
+    logging_file = os.path.join(args.output_dir, "output.log")
 
     args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    if args.data_file.split('.')[-1] != 'csv':
-        raise ValueError("Test data file must be csv.")
     
     # Setup logging
-    logging.basicConfig(filename=f"{args.output_dir}/output.log",
+    args.logger = logging.getLogger(__name__)
+
+    logging.basicConfig(filename=logging_file,
                         format = '%(asctime)s - %(levelname)s - %(message)s',
                         datefmt = '%m/%d/%Y %H:%M:%S',
                         level = logging.INFO)
     
-    logger.info(f"transformers: v. {transformers.__version__}")
-
     print(f"Command line arguments")
-    logger.info(f"Command line arguments")
+    args.logger.info(f"Command line arguments")
     for name in vars(args):
         value = vars(args)[name]
 
-        print(f"{name}: {value}")
-        logger.info(f"{name}: {value}")
+        print(f"\t{name}: {value}")
+        args.logger.info(f"\t{name}: {value}")
     
     # Set seed
     set_seed(args)
 
     # Load tokenizer for BERT-NLI task
-    tokenizer = BertNLITokenizer(args.encoder_checkpoint, args.encoder_max_length)
+    tokenizer = BertNLITokenizer(args.encoder_checkpt, args.encoder_max_len)
 
     # Load pretrained model
-    model = BertNLIModel(args.encoder_checkpoint)
+    model = BertNLIModel(args.encoder_checkpt, args.device)
 
     model.to(args.device)
 
@@ -91,28 +84,21 @@ if __name__ == '__main__':
     else:
         model.load_state_dict(torch.load(args.trained_model_file)['model_state_dict'])
 
-    test_dataset = EsnliDataset(args.data_file, rows=args.num_samples)
+    test_data = SNLIDataset("test", rows=args.num_test_samples)
     test_dataloader = DataLoader(
-        test_dataset, 
+        test_data, 
         batch_size=args.batch_size, 
         pin_memory=True, 
         shuffle=False, 
-        sampler=SequentialSampler(test_dataset)
+        sampler=SequentialSampler(test_data)
     )
 
     # Evaluate model on e-SNLI test data
     model.eval()
 
-    ID2LABEL = {0: 'entailment', 1: 'neutral', 2: 'contradiction'}
     headers = ['premise', 'hypothesis', 'gold_label', 'pred_label']
 
-    # if os.path.exists('./results.csv'):
-        # os.remove('./results.csv')
-    
-    metrics_file_path = os.path.join(args.output_dir, "metrics.txt")
-    csv_file_path = os.path.join(args.output_dir, "results.csv")
-
-    csv_file = open(csv_file_path, 'x')
+    csv_file = open(predictions_file, mode='x', newline='', encoding='utf-8')
     writer = csv.writer(csv_file)
     writer.writerow(headers)
     
@@ -134,8 +120,8 @@ if __name__ == '__main__':
             for i in range(len(pred_labels)):
                 row = []
 
-                row.append(batch['premise'])
-                row.append(batch['hypothesis'])
+                row.append(batch['premise'][i])
+                row.append(batch['hypothesis'][i])
                 row.append(ID2LABEL[gold_labels[i].item()])
                 row.append(ID2LABEL[pred_labels[i].item()])
 
@@ -145,7 +131,7 @@ if __name__ == '__main__':
 
     acc = test_acc / len(test_dataloader)
 
-    with open(metrics_file_path, 'w') as f:
+    with open(scores_file, 'w') as f:
         f.write(f'Test acc: {acc:.4f}\n')
 
-    logger.info(f'Test acc: {acc}')
+    args.logger.info(f'Test acc: {acc}')

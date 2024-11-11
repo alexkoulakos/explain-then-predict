@@ -1,63 +1,34 @@
 import torch
-import torch.nn as nn
 import argparse
-import random
-import numpy as np
-import transformers
 import os
 import logging
 import time
 
+from torch.optim import Adam
+from torch.nn import CrossEntropyLoss
 from torch.utils.data import DataLoader, SequentialSampler, RandomSampler
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel
-from torch.distributed import init_process_group, destroy_process_group
 
+from model import BertNLIModel
+from tokenizer import BertNLITokenizer
+from dataset import SNLIDataset
 from utils import *
 
-ID2LABEL = {0: 'entailment', 1: 'neutral', 2: 'contradiction'}
-
-logger = logging.getLogger(__name__)
-
-def set_seed(args):
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    
-    if args.n_gpus > 0:
-        torch.cuda.manual_seed_all(args.seed)
-
-def setup(args):
-    init_process_group(backend="nccl")
-    torch.cuda.set_device(args.local_rank)
-
-def cleanup():
-    destroy_process_group()
-
-def epoch_time(start_time, end_time):
-    elapsed_time = end_time - start_time
-    elapsed_mins = int(elapsed_time / 60)
-    elapsed_secs = int(elapsed_time - (elapsed_mins * 60))
-
-    return elapsed_mins, elapsed_secs
-
-def display_info(device, step, progress, loss, acc, mins_elapsed, secs_elapsed, premise, hypothesis, gold_label, pred_label, mode):
-    assert mode in ['train', 'eval']
-
-    logger.info(f"Device: {device}")
-    logger.info(f"iter: {step} | progress: {progress:.2f}%")
-    logger.info(f"avg. {mode} loss: {loss} | avg. {mode} acc: {acc} | time elapsed: {mins_elapsed} mins {secs_elapsed} secs")
-    logger.info(f"PREMISE: {premise}")
-    logger.info(f"HYPOTHESIS: {hypothesis}")
-    logger.info(f"GOLD LABEL: {gold_label}")
-    logger.info(f"PREDICTED LABEL: {pred_label}")
-
-def train_epoch(model, tokenizer, epoch, dataloader, optimizer, criterion, args):
+def train_epoch(
+        model: BertNLIModel, 
+        tokenizer: BertNLITokenizer, 
+        epoch: int, 
+        dataloader: DataLoader, 
+        optimizer: Adam, 
+        criterion: CrossEntropyLoss, 
+        args
+    ):
     model.train()
 
     if args.local_rank in [-1, 0]:
-        logger.info(100 * '-')
-        logger.info(f'Epoch {epoch} running ...')
+        args.logger.info(100 * '-')
+        args.logger.info(f'Epoch {epoch} running ...')
 
     epoch_start_time = time.time()
     train_loss = 0
@@ -98,9 +69,11 @@ def train_epoch(model, tokenizer, epoch, dataloader, optimizer, criterion, args)
         
         if step % args.logging_steps == 0 and args.local_rank in [-1, 0]:
             progress = 100 * (step/(len(dataloader)))
-            mins, secs = epoch_time(epoch_start_time, time.time())
+            time_elapsed_dict = compute_time(epoch_start_time, time.time())
+            mins, secs = time_elapsed_dict['elapsed_mins'], time_elapsed_dict['elapsed_secs']
 
-            display_info(
+            display_training_progress(
+                args.logger,
                 args.device,
                 step, 
                 progress, 
@@ -114,11 +87,23 @@ def train_epoch(model, tokenizer, epoch, dataloader, optimizer, criterion, args)
                 ID2LABEL[pred_labels[0].item()],
                 'train'
             )
-        
-    return train_loss / len(dataloader), train_acc / len(dataloader), epoch_start_time
 
-# IMPORTANT: Vaidation happens only on GPU 0!
-def evaluate_epoch(model, tokenizer, dataloader, criterion, args):
+    train_loss /= len(dataloader)
+    train_acc /= len(dataloader)
+
+    return {
+        'loss': train_loss,
+        'acc': train_acc
+    }    
+
+# IMPORTANT: Validation happens only on GPU 0!
+def validate(
+        model: BertNLIModel, 
+        tokenizer: BertNLITokenizer, 
+        dataloader: DataLoader, 
+        criterion: CrossEntropyLoss, 
+        args
+    ):
     model.eval()
 
     eval_start_time = time.time()
@@ -149,9 +134,11 @@ def evaluate_epoch(model, tokenizer, dataloader, criterion, args):
             
             if step % args.logging_steps == 0 and args.local_rank in [-1, 0]:
                 progress = 100 * (step/(len(dataloader)))
-                mins, secs = epoch_time(eval_start_time, time.time())
+                time_elapsed_dict = compute_time(eval_start_time, time.time())
+                mins, secs = time_elapsed_dict['elapsed_mins'], time_elapsed_dict['elapsed_secs']
 
-                display_info(
+                display_training_progress(
+                    args.logger,
                     args.device,
                     step, 
                     progress, 
@@ -165,23 +152,27 @@ def evaluate_epoch(model, tokenizer, dataloader, criterion, args):
                     ID2LABEL[pred_labels[0].item()],
                     'eval'
                 )
-        
-    return eval_loss / len(dataloader), eval_acc / len(dataloader), eval_start_time
+    
+    eval_loss /= len(dataloader)
+    eval_acc /= len(dataloader)
 
+    return {
+        'loss': eval_loss,
+        'acc': eval_acc
+    }
+        
 def main():
     parser = argparse.ArgumentParser()
 
-    # Required params
-    parser.add_argument("--train_data_file", type=str, required=True,
-                        help="Path to training data csv file.")
-    parser.add_argument("--eval_data_file", type=str, required=True,
-                        help="Path to validation data csv file.")
+    # Required param
+    parser.add_argument("--output_dir", type=str, required=True,
+                        help="Directory to store output files (checkpoints, trained_model, log file).")
     
     # Non-required params
-    parser.add_argument("--encoder_checkpoint", default="bert-base-uncased", type=str, 
+    parser.add_argument("--encoder_checkpt", default="bert-base-uncased", type=str, 
                         help="Encoder checkpoint for weights initialization.")
     
-    parser.add_argument("--encoder_max_length", type=int, default=256, 
+    parser.add_argument("--encoder_max_len", type=int, default=256, 
                         help="Max number of tokens the encoder can process.")
     
     parser.add_argument("--num_train_epochs", default=3, type=int, 
@@ -200,7 +191,7 @@ def main():
     parser.add_argument("--num_train_samples", type=int, default=-1, 
                         help="Number of samples to use for training (-1 corresponds to the entire train set).")
     parser.add_argument('--num_eval_samples', type=int, default=-1,
-                        help="Number of samples to use for evaluation (-1 corresponds to the entire validation set).")
+                        help="Number of samples to use for validation (-1 corresponds to the entire validation set).")
     
     parser.add_argument("--use_distributed_training", action="store_true",
                         help="Whether to use distributed setup (multiple GPUs) for training.")
@@ -228,35 +219,35 @@ def main():
     
     args.device = device
 
-    if args.train_data_file.split('.')[-1] != 'csv':
-        raise ValueError("Training data file must be csv.")
-    
-    if args.eval_data_file.split('.')[-1] != 'csv':
-        raise ValueError("Validation data file must be csv.")
+    # Set up output directory and files
+    os.makedirs(args.output_dir, exist_ok=True)
 
-    # Setup output dir (example: /train_results/bert-base-uncased_128___bs_32)
-    encoder_substr = f"{args.encoder_checkpoint}_{args.encoder_max_length}"
-    batch_size_substr = f"bs_{args.per_device_batch_size}"
-    transformers_version = f"transformers:{transformers.__version__}"
-
-    # args.output_dir = f"./train_results/{encoder_substr}___{batch_size_substr}"
-    args.output_dir = f"./train_results/{transformers_version}/{args.encoder_checkpoint}/encoder_max_length_{args.encoder_max_length}__batch_size_{args.per_device_batch_size}__n_gpus_{args.n_gpus}"
-
-    if not os.path.exists(args.output_dir):
-        os.makedirs(args.output_dir)
+    checkpt_file = os.path.join(args.output_dir, "checkpoint.pt")
+    model_file = os.path.join(args.output_dir, "model.pt")
+    logging_file = os.path.join(args.output_dir, "output.log")
+    train_synopsis_file = os.path.join(args.output_dir, "train_synopsis.out")
     
     # Setup logging
-    logging.basicConfig(filename=f"{args.output_dir}/output.log",
+    args.logger = logging.getLogger(__name__)
+
+    logging.basicConfig(filename=logging_file,
                         format = '%(asctime)s - %(levelname)s - %(message)s',
                         datefmt = '%m/%d/%Y %H:%M:%S',
                         level = logging.INFO)
 
     # Only process 0 performs logging in order to avoid output repetition (in case of distributed training)
     if args.local_rank in [-1, 0]:
-        print(f"transformers: v. {transformers.__version__}")
-        logger.info(f"transformers: v. {transformers.__version__}")
-        logger.info(f"{args.n_gpus} GPU(s) available for training!")
-        logger.info(f"Command line arguments: {args}")
+        if args.local_rank == 0:
+            args.logger.info(f"{args.n_gpus} GPU(s) available for training!\n")
+
+        print(f"Command line arguments:")
+        args.logger.info(f"Command line arguments:")
+        
+        for name in vars(args):
+            value = vars(args)[name]
+
+            print(f"\t{name}: {value}")
+            args.logger.info(f"\t{name}: {value}")
 
     # Set seed
     set_seed(args)
@@ -266,11 +257,11 @@ def main():
         if args.local_rank != 0:
             torch.distributed.barrier()
     
-    # Load tokenizer for BERT-NLI task
-    tokenizer = BertNLITokenizer(args.encoder_checkpoint, args.encoder_max_length)
+    # Load tokenizer for the NLI task
+    tokenizer = BertNLITokenizer(args.encoder_checkpt, args.encoder_max_len)
 
     # Initialize Expl2Label model with the given checkpoint
-    model = BertNLIModel(args.encoder_checkpoint)
+    model = BertNLIModel(args.encoder_checkpt, args.device)
 
     model.to(args.device)
     
@@ -284,38 +275,36 @@ def main():
         if args.local_rank != 0:
             torch.distributed.barrier()
 
-    train_dataset = EsnliDataset(args.train_data_file, rows=args.num_train_samples)
-    eval_dataset = EsnliDataset(args.eval_data_file, rows=args.num_eval_samples)
+    train_data = SNLIDataset("train", rows=args.num_train_samples)
+    eval_data = SNLIDataset("validation", rows=args.num_eval_samples)
 
     if args.use_distributed_training:
         # End of barrier
         if args.local_rank == 0:
             torch.distributed.barrier()
     
-    sampler = DistributedSampler(train_dataset) if args.use_distributed_training else RandomSampler(train_dataset)
+    sampler = DistributedSampler(train_data) if args.use_distributed_training else RandomSampler(train_data)
     train_dataloader = DataLoader(
-        train_dataset, 
+        train_data, 
         batch_size=args.per_device_batch_size, 
         pin_memory=True, 
         shuffle=False, 
         sampler=sampler
     )
 
-    eval_dataloader = DataLoader(
-        eval_dataset, 
+    validation_dataloader = DataLoader(
+        eval_data, 
         batch_size=args.per_device_batch_size, 
         pin_memory=True, 
         shuffle=False, 
-        sampler=SequentialSampler(eval_dataset)
+        sampler=SequentialSampler(eval_data)
     )
 
     start_epoch = 0 
-    best_eval_acc = 0
+    best_val_acc = 0
 
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-05)
-    criterion = nn.CrossEntropyLoss(reduction='mean')
-
-    checkpoint_path = os.path.join(args.output_dir, "checkpoint.pt")
+    criterion = CrossEntropyLoss(reduction='mean')
 
     if args.use_distributed_training:
         # Barrier to make sure that only process 0 checks for existing model checkpoints and performs logging
@@ -324,24 +313,24 @@ def main():
 
     if args.local_rank in [-1, 0]:
         # Train
-        logger.info("*************** RUNNING TRAINING ***************")
-        logger.info(f"examples: {len(train_dataset)}")
-        logger.info(f"epochs: {args.num_train_epochs}")
-        logger.info(f"batch size per GPU: {args.per_device_batch_size}")
-        logger.info(f"gradient accumulation steps: {args.gradient_accumulation_steps}")
+        args.logger.info("*************** LAUNCHING TRAINING ***************")
+        args.logger.info(f"Train samples: {len(train_data)}")
+        args.logger.info(f"Validation samples: {len(train_data)}")
+        args.logger.info(f"Epochs: {args.num_train_epochs}")
+        args.logger.info(f"Batch size per GPU: {args.per_device_batch_size}")
+        args.logger.info(f"Gradient accumulation steps: {args.gradient_accumulation_steps}")
 
-        if os.path.exists(checkpoint_path):
-            ###### CHECK THAT AGAIN LATER! ######
+        if os.path.exists(checkpt_file):
             if args.device == torch.device("cpu"):
-                checkpoint = torch.load(checkpoint_path, map_location=args.device)
+                checkpoint = torch.load(checkpt_file, map_location=args.device)
             else:
-                checkpoint = torch.load(checkpoint_path)
+                checkpoint = torch.load(checkpt_file)
 
             model.load_state_dict(checkpoint['model_state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             start_epoch = checkpoint['epoch']
 
-            logger.info(f"Resuming training from epoch {start_epoch + 1}")
+            args.logger.info(f"Resuming training from epoch {start_epoch + 1}")
     
     if args.use_distributed_training:
         # End of barrier
@@ -357,8 +346,9 @@ def main():
         )
 
     # Train for each epoch
+    args.start_time = time.time()
     for epoch in range(start_epoch + 1, args.num_train_epochs + 1):
-        _, _, _ = train_epoch(
+        train_results_dict = train_epoch(
             model, 
             tokenizer, 
             epoch, 
@@ -367,6 +357,8 @@ def main():
             criterion, 
             args
         )
+
+        train_loss, train_acc = train_results_dict['loss'], train_results_dict['acc']
 
         """
         Evaluation happens only on GPU 0, because we need evaluation results gathered in a single device, 
@@ -379,45 +371,52 @@ def main():
                 torch.distributed.barrier()
 
         if args.local_rank in [-1, 0]:
-            eval_loss, eval_acc, eval_start_time = evaluate_epoch(
+            val_results_dict = validate(
                 model, 
                 tokenizer, 
-                eval_dataloader, 
+                validation_dataloader, 
                 criterion, 
                 args
             )
 
-            eval_mins, eval_secs = epoch_time(eval_start_time, time.time())
+            val_loss, val_acc = val_results_dict['loss'], val_results_dict['acc']
 
-            output_dir = args.output_dir
-            metrics_file = f"{output_dir}/results.out"
-            model_file = f"{output_dir}/model.pt"
-            checkpoint_file = f"{output_dir}/checkpoint.pt"
+            time_elapsed_dict = compute_time(args.start_time, time.time())
 
-            with open(metrics_file, 'a') as f:
-                f.write("----- Eval results -----\n")
+            elapsed_mins, elapsed_secs = time_elapsed_dict['elapsed_mins'], time_elapsed_dict['elapsed_secs']
+
+            args.logger.info(f"Completed epoch {epoch} in {elapsed_mins} mins & {elapsed_secs} secs\n")
+            args.logger.info(f"\tvalidation loss {val_loss} | validation acc {val_acc}\n")
+
+            with open(train_synopsis_file, 'a') as f:
                 f.write(f"EPOCH {epoch}\n")
-                f.write(f"\t eval_loss: {eval_loss}, eval_acc: {eval_acc}, time_elapsed: {eval_mins} mins & {eval_secs} secs.\n\n")
-            
-            logger.info(f'Completed epoch {epoch} | avg. eval loss {eval_loss} | avg. eval acc {eval_acc} | time elapsed: {eval_mins} mins {eval_secs} secs')
-            
+                f.write(f"\ttrain loss: {train_loss}, train acc: {train_acc}\n")
+                f.write(f"\tvalidation loss: {val_loss}, validation acc: {val_acc}\n")
+                        
             checkpoint_dict = {
                 'epoch': epoch,
                 'model_state_dict': model.module.state_dict() if hasattr(model, 'module') else model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-                'eval_loss': eval_loss,
-                'eval_acc': eval_acc,
+                'val_loss': val_loss,
+                'val_acc': val_acc,
             }
 
-            torch.save(checkpoint_dict, checkpoint_file)
+            torch.save(checkpoint_dict, checkpt_file)
 
-            logger.info(f"Saving model checkpoint to {checkpoint_file}")
+            args.logger.info(f"SAVING MODEL CHECKPOINTS TO: {checkpt_file}")
             
-            if eval_acc > best_eval_acc:
-                logger.info("New best model found")
-                best_eval_acc = eval_acc
-                torch.save({'model_state_dict': checkpoint_dict['model_state_dict']}, model_file)
-                logger.info(f"Saving current best model to {model_file}")
+            if val_acc > best_val_acc:
+                args.logger.info("NEW BEST MODEL FOUND\n")
+                args.logger.info(f"SAVING CURRENT BEST MODEL TO: {model_file}")
+                
+                model_dict = {
+                    'model_state_dict': checkpoint_dict['model_state_dict'],
+                    'args': args
+                }
+                
+                torch.save(model_dict, model_file)
+
+                best_val_acc = val_acc
         
         if args.use_distributed_training:
             if args.local_rank == 0:

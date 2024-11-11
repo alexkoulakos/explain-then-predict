@@ -1,0 +1,13 @@
+{
+    "max_length": 50,
+    "min_length": 0,
+    "early_stopping": "True",
+    "do_sample": "True",
+    "num_beams": 1,
+    "penalty_alpha": "None",
+    "temperature": 1.0,
+    "top_k": 0,
+    "top_p": 0.9,
+    "no_repeat_ngram_size": 0
+  }
+  
