@@ -22,7 +22,7 @@ The repo is organized in the following core directories:
 5. Install necessary dependancies: `pip install -r requirements.txt`
 
 ## Citation
-If you use our findings in your work, don't forget to cite us:
+If you use our findings in your work, don't forget to cite our paper:
 
 ```
 @inproceedings{koulakos-etal-2024-enhancing,
