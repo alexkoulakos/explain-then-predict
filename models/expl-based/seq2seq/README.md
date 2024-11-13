@@ -8,8 +8,10 @@ __hypothesis:__ A vehicle is crossing a river.
 __explanation:__ Land Rover is a vehicle.
 
 ## Training
+In order to train a _seq2seq_ model using `bert-base-uncased` checkpoint from HuggingFace as the encoder module and the `gpt2` checkpoint as the decoder module, you can run the following command:
+
 ```bash
-python train.py \
+python models/expl-based/seq2seq/train.py \
     --encoder_checkpt bert-base-uncased \
     --encoder_max_len 128 \
     --decoder_checkpt gpt2 \
