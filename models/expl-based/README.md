@@ -8,7 +8,7 @@ This directory contains the full code for training and evaluating all the models
 
 :warning:**Note:**:warning: The above models are trained independently and they are joined together for inference only.
 
-:information_source:For training details of the _expl2label_ or _seq2seq_ model, see the README file in the corresponding directory.
+:information_source: For training details of the _expl2label_ or _seq2seq_ model, see the README file in the corresponding directory.
 
 ## Usage
 In order to perform **inference** using the _seq2seq_ model (stored in directory _path/to/seq2seq/fine-tuned/model/dir_) followed by the _expl2label_ model (stored in file _path/to/expl2label/fine-tuned/model.pt_), you can use the below:
