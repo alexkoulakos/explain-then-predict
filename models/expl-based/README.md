@@ -1,14 +1,14 @@
 # Explanation-based models
 
 ## Overview
-This directory contains the full code for training and evaluating all the models that that follow the "Explain Then Predict" pipeline. According to this setup, the following apply:
+This directory contains the full code for training and evaluating all the models that follow the *Explain Then Predict* pipeline. According to this setup, the following apply:
 
 1. First, a _seq2seq_ model is fed with a pair (premise, hypothesis) and predicts an explanation that describes the inference relationship between premise and hypothesis.
 2. This explanation is fed to an _expl2label_ model which finally predicts the output label (entailment, contradiction, neutral) based on the input explanation.
 
-**Note:** The above models are trained independently and they are joined together for inference only.
+:warning:**Note:**:warning: The above models are trained independently and they are joined together for inference only.
 
-For training details of the _expl2label_ or _seq2seq_ model, see the README file in the corresponding directory.
+:information_source:For training details of the _expl2label_ or _seq2seq_ model, see the README file in the corresponding directory.
 
 ## Usage
 In order to perform **inference** using the _seq2seq_ model (stored in directory _path/to/seq2seq/fine-tuned/model/dir_) followed by the _expl2label_ model (stored in file _path/to/expl2label/fine-tuned/model.pt_), you can use the below:
@@ -24,4 +24,4 @@ python models/expl-based/inference.py \
     --num_test_samples -1 \
 ```
 
-**Note:** You can customize the text generation strategy and parameters by modifying the file `generation_config.py` according to your specific needs.
+:warning:**Note:**:warning: You can customize the text generation strategy and parameters by modifying the file `generation_config.py` according to your specific needs.

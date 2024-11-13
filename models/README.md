@@ -6,4 +6,4 @@ This directory contains the full code for training and evaluating all the models
 ## Structure
 The current directory includes the two following sub-directories:
  * `expl-free`: Refers to the training and evaluation of a BERT-based classifier for the NLI task. The model does not leverage explanations and thus serves as baseline.
- * `expl-based`: Refers to the training and evaluation of the models that leverage natural language explanations according to the "Explain Then Predict" pipeline.
+ * `expl-based`: Refers to the training and evaluation of the models that leverage natural language explanations according to the *Explain Then Predict* pipeline.

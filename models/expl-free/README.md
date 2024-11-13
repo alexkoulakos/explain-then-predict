@@ -6,7 +6,7 @@ This directory contains the full code for training and evaluating the model that
 ## Usage
 
 ### Training
-In order to fine-tune a BERT-based NLI classifier using `bert-base-uncased` checkpoint from HuggingFace as the encoder module, you can run the following command:
+In order to fine-tune a classifier for the NLI task using `bert-base-uncased` checkpoint from HuggingFace as the encoder module, you can run the following command:
 
 ```bash
 python models/expl-free/train.py \
@@ -34,4 +34,4 @@ python models/expl-free/inference.py \
     --num_test_samples -1 \
 ```
 
-**Note:** The value of `encoder_checkpt` parameter during inference must match the checkpoint that was used for fine-tuning the classifier.
+:warning:**Note:**:warning: The value of `encoder_checkpt` parameter during inference must match the checkpoint that was used for fine-tuning the classifier.
