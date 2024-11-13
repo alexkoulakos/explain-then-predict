@@ -5,7 +5,7 @@
 ## Overview
 This repository contains the source code for our BlackBoxNLP 2024 @ EMNLP paper:
 
-_Enhancing adversarial robustness in Natural Language Inference using explanations_ (https://arxiv.org/abs/2409.07423)
+_Enhancing adversarial robustness in Natural Language Inference using explanations_ (https://aclanthology.org/2024.blackboxnlp-1.7)
 
 In this work, we investigate whether the usage of intermediate explanations in the Natural Language Inference (NLI) task can serve as a model-agnostic defence strategy against adversarial attacks. Our claim is that the intermediate explanation can filter out potential noise superimposed by the adversarial attack in the input pair (premise, hypothesis). Through extensive experimentation, we prove that conditioning the output label (entailment, contradiction, neutral) on an intermediate explanation that describes the inference relationship between the input premise and hypothesis, adversarial robustness is indeed achieved.
 
@@ -20,3 +20,19 @@ The repo is organized in the following core directories:
 3. Create a virtual environment called _venv_: `virtualenv --system-site-packages venv`
 4. Activate the virtual environment: `src venv/bin/activate` (for Linux/MacOS) or `./venv/Scripts/activate.ps1` (for Windows)
 5. Install necessary dependancies: `pip install -r requirements.txt`
+
+## Citation
+If you use our findings in your work, don't forget to cite us:
+
+@inproceedings{koulakos-etal-2024-enhancing,
+    title = "Enhancing adversarial robustness in Natural Language Inference using explanations",
+    author = "Koulakos, Alexandros and Lymperaiou, Maria and Filandrianos, Giorgos and Stamou, Giorgos",
+    editor = "Belinkov, Yonatan and Kim, Najoung and Jumelet, Jaap and Mohebbi, Hosein and Mueller, Aaron and Chen, Hanjie",
+    booktitle = "Proceedings of the 7th BlackboxNLP Workshop: Analyzing and Interpreting Neural Networks for NLP",
+    month = nov,
+    year = "2024",
+    address = "Miami, Florida, US",
+    publisher = "Association for Computational Linguistics",
+    url = "https://aclanthology.org/2024.blackboxnlp-1.7",
+    pages = "105--117"
+}
