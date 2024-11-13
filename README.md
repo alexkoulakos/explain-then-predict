@@ -24,7 +24,7 @@ The repo is organized in the following core directories:
 ## Citation
 If you use our findings in your work, don't forget to cite us:
 
-```bibtex
+```
 @inproceedings{koulakos-etal-2024-enhancing,
     title = "Enhancing adversarial robustness in Natural Language Inference using explanations",
     author = "Koulakos, Alexandros and Lymperaiou, Maria and Filandrianos, Giorgos and Stamou, Giorgos",
