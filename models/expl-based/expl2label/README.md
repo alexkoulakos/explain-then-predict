@@ -36,4 +36,4 @@ python models/expl-based/expl2label/inference.py \
     --num_test_samples -1 \
 ```
 
-**Note:** The value of `encoder_checkpt` parameter during inference must match the checkpoint that was used for fine-tuning the *expl2label* model.
+:warning:**Note:**:warning: The value of `encoder_checkpt` parameter during inference must match the checkpoint that was used for fine-tuning the *expl2label* model.

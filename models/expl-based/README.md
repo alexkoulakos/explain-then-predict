@@ -24,4 +24,4 @@ python models/expl-based/inference.py \
     --num_test_samples -1 \
 ```
 
-:warning:**Note:**:warning: You can customize the text generation strategy and parameters by modifying the file `generation_config.py` according to your specific needs.
+:information_source: You can customize the text generation strategy and parameters by modifying the file `generation_config.py` according to your specific needs.
