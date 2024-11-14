@@ -21,6 +21,16 @@ The repo is organized in the following core directories:
 4. Activate the virtual environment: `src venv/bin/activate` (for Linux/MacOS) or `./venv/Scripts/activate.ps1` (for Windows)
 5. Install necessary dependancies: `pip install -r requirements.txt`
 
+## Support and Issues
+If you encounter any issues, bugs, or have questions, please feel free to open an issue on GitHub. Describe the problem you encountered, including:
+
+* A clear description of the issue or bug
+* Steps to reproduce the issue (if applicable)
+* Any relevant error messages or screenshots
+* Details about your environment (Python version, OS, library versions)
+
+We’ll do our best to respond quickly and help resolve any problems.
+
 ## Citation
 If you use our findings in your work, don't forget to cite our paper:
 
