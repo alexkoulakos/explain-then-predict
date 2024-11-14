@@ -1,4 +1,4 @@
-# Seq2Seq Model
+# Fine-tuning and evaluation of the Seq2Seq Model
 
 ## Overview
 The _seq2seq_ model variations generate a natural language explanation that describes the inference relationship between the input premise and hypothesis. E.g.
@@ -15,7 +15,7 @@ __explanation:__ Land Rover is a vehicle.
 In order to fine-tune a _seq2seq_ model using `bert-base-uncased` checkpoint from HuggingFace as the encoder module and the `gpt2` checkpoint as the decoder module, you can run the following command:
 
 ```bash
-python models/expl-based/seq2seq/train.py \
+python fine-tuning/expl-based/seq2seq/train.py \
     --encoder_checkpt bert-base-uncased \
     --encoder_max_len 128 \
     --decoder_checkpt gpt2 \
@@ -36,10 +36,12 @@ python models/expl-based/seq2seq/train.py \
 In order to use a fine-tuned *seq2seq* model (stored in directory _path/to/seq2seq/fine-tuned/model/dir_) for inference, you can run the following command:
 
 ```bash
-python models/expl-based/seq2seq/inference.py \
+python fine-tuning/expl-based/seq2seq/inference.py \
     --trained_model path/to/seq2seq/fine-tuned/model/dir \
     --text_generation_strategy greedy_search \
     --output_dir path/to/output/dir \
     --batch_size 32 \
     --num_test_samples -1 \
 ```
+
+:warning:**Note:**:warning: In contrast to the Expl2Label setup, there is no need to specify during inference the encoder checkpoint as it is automatically inferred from the `config.json` file inside the *path/to/seq2seq/fine-tuned/model/dir* directory.

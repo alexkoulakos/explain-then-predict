@@ -1,4 +1,4 @@
-# Explain Then Predict
+# Adversarial robustness under the "Explain Then Predict" setting
 
 [![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/) [![Transformers](https://img.shields.io/badge/Transformers-FFD21E?logo=huggingface&logoColor=black)](https://huggingface.co/) [![TextAttack](https://img.shields.io/badge/TextAttack-20232A?logo=octopusdeploy&logoColor=D61F2A)](https://textattack.readthedocs.io/)
 
@@ -11,7 +11,7 @@ In this work, we investigate whether the usage of intermediate explanations in t
 
 ## Project structure
 The repo is organized in the following core directories:
- * `models`: Includes the code for training and evaluating all the models that are used in our experiments. See the README file located in `models` directory for more details.
+ * `fine-tuning`: Includes the code for training and evaluating all the models that are used in our experiments. See the README file located in `fine-tuning` directory for more details.
  * `adversarial_attacks`: Includes the code for performing adversarial attacks against the aforementioned models. See the README file located in `adversarial_attacks` directory for more details.
 
 ## Installation

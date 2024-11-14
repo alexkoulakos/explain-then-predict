@@ -1,4 +1,4 @@
-# Models
+# Fine-tuning and evaluation
 
 ## Overview
 This directory contains the full code for training and evaluating all the models that are used in our experiments. Depending on whether the models involve natural language explanations or not, they are distinguished into _explanations-based_ (`expl-based` directory) and _explanations-free_ (`expl-free` directory), respectively.

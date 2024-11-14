@@ -1,11 +1,28 @@
 import torch
 import torch.nn as nn
 
-from transformers import EncoderDecoderModel, AutoTokenizer
-
-from models.expl_to_label import Expl2LabelModel
-
+from transformers import AutoModel, EncoderDecoderModel, AutoTokenizer
+    
 class ExplainThenPredictModel(nn.Module):
+    class Expl2LabelModel(nn.Module):
+        def __init__(self, checkpt):
+            super().__init__()
+
+            self.encoder = AutoModel.from_pretrained(checkpt)
+            self.embedding_dim = self.encoder.config.to_dict()['hidden_size']
+            self.output_dim = 3
+            
+            self.classifier = nn.Linear(self.embedding_dim, self.output_dim)
+        
+        def forward(self, input_ids, attention_mask):
+            _, embeddings = self.encoder(
+                input_ids,
+                attention_mask,
+                return_dict=False
+            )
+
+            return self.classifier(embeddings)
+    
     def __init__(self, args):
         super(ExplainThenPredictModel, self).__init__()
 
@@ -13,20 +30,20 @@ class ExplainThenPredictModel(nn.Module):
         self.encoder_max_len = args.encoder_max_len
         self.generation_config = args.generation_config
 
-        ## Load pretrained models
+        ## Load pretrained models ##
 
         # Load Seq2Seq model
         self.seq2seq_model = EncoderDecoderModel.from_pretrained(args.seq2seq_model).to(self.device)
 
         # Load Expl2Label model
-        self.expl2label_model = Expl2LabelModel(args.expl2label_encoder_checkpt).to(self.device)
+        self.expl2label_model = self.Expl2LabelModel(args.expl2label_encoder_checkpt).to(self.device)
         
         if self.device == torch.device('cpu'):
             self.expl2label_model.load_state_dict(torch.load(args.expl2label_model, map_location=self.device)['model_state_dict'])
         else:
             self.expl2label_model.load_state_dict(torch.load(args.expl2label_model)['model_state_dict'])
 
-        ## Load intermediate tokenizers
+        ## Load intermediate tokenizers ##
 
         # Tokenizer for Seq2Seq decoder part
         self._seq2seq_decoder_tokenizer = AutoTokenizer.from_pretrained(self.seq2seq_model.config.decoder._name_or_path)

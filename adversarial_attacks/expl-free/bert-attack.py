@@ -1,11 +1,14 @@
 import textattack
 import torch
 import argparse
-import ssl
 import os
 import sys
+import logging
+import warnings
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
+# Add `utils.py` to interpreter path
+current_file = os.path.abspath(__file__)
+sys.path.append(os.path.dirname(os.path.dirname(current_file)))
 
 from typing import List
 
@@ -15,11 +18,14 @@ from textattack.attack_args import AttackArgs
 from textattack.transformations.word_swaps import WordSwapMaskedLM
 from textattack.attack_recipes import BERTAttackLi2020
 
-from models.baseline import BertNLIModel
-from baseline_tokenizer import BertNLITokenizer
-from model_wrappers.baseline import BertNLIModelWrapper
-
+from model_wrapper import BertNLIModelWrapper
+from model import BertNLIModel
+from tokenizer import BertNLITokenizer
 from utils import *
+
+# Suppress all kinds of warnings
+logging.getLogger("tensorflow").setLevel(logging.ERROR)
+warnings.filterwarnings("ignore")
 
 def construct_attacks(args) -> List[textattack.Attack]:
     attacks = []
@@ -36,20 +42,14 @@ def construct_attacks(args) -> List[textattack.Attack]:
     return attacks
 
 if __name__ == '__main__':
-    try:
-        _create_unverified_https_context = ssl._create_unverified_context
-    except AttributeError:
-        # Legacy Python that doesn't verify HTTPS certificates by default
-        pass
-    else:
-        # Handle target environment that doesn't support HTTPS verification
-        ssl._create_default_https_context = _create_unverified_https_context
-
     parser = argparse.ArgumentParser()
 
     # Required params
-    parser.add_argument("--bert_nli_trained_model", type=str, required=True, 
-                        help="Path to fine-tuned baseline classifier model file")
+    parser.add_argument("--trained_model_file", type=str, required=True, 
+                        help="Path to fine-tuned model file.")
+    
+    parser.add_argument("--encoder_checkpt", required=True, type=str, 
+                        help="Encoder checkpoint for the fine-tuned encoder part.")
     
     parser.add_argument("--output_dir", type=str, required=True,
                         help="Directory to store output files.")
@@ -77,31 +77,46 @@ if __name__ == '__main__':
         args.column_to_ignore = 'hypothesis'
     else:
         args.column_to_ignore = 'premise'
-
-    # Extract checkpoint info from BERT-NLI trained model file
-    # All trained BERT-NLI models are located in directories of the form `./train_results/{transformers_version}/{encoder_checkpoint}/encoder_max_length_{encoder_max_length}__batch_size_{batch_size}__n_gpus_{n_gpus}/model.pt`.
-    args.bert_nli_encoder_checkpoint =  args.bert_nli_trained_model.split('/')[-3]
     
     args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # Set up output directory and logging file
     os.makedirs(args.output_dir, exist_ok=True)
+
+    logging_file = os.path.join(args.output_dir, "output.log")
+
+    # Setup logging
+    args.logger = logging.getLogger(__name__)
+
+    logging.basicConfig(filename=logging_file,
+                        format = '%(asctime)s - %(levelname)s - %(message)s',
+                        datefmt = '%m/%d/%Y %H:%M:%S',
+                        level = logging.INFO)
+    
+    print(f"Command line arguments:")
+    args.logger.info(f"Command line arguments:")
+    for name in vars(args):
+        value = vars(args)[name]
+
+        print(f"\t{name}: {value}")
+        args.logger.info(f"\t{name}: {value}")
 
     # Load pretrained model
     model = BertNLIModel(
-        args.bert_nli_encoder_checkpoint,
+        args.encoder_checkpt,
         args.device
     )
 
     model.to(args.device)
 
     if args.device == torch.device('cpu'):
-        model.load_state_dict(torch.load(args.bert_nli_trained_model, map_location=args.device)['model_state_dict'])
+        model.load_state_dict(torch.load(args.trained_model_file, map_location=args.device)['model_state_dict'])
     else:
-        model.load_state_dict(torch.load(args.bert_nli_trained_model)['model_state_dict'])
+        model.load_state_dict(torch.load(args.trained_model_file)['model_state_dict'])
     
     # Load tokenizer for BERT-NLI task
     tokenizer = BertNLITokenizer(
-        args.bert_nli_encoder_checkpoint, 
+        args.encoder_checkpt, 
         args.encoder_max_len
     )
 
@@ -115,18 +130,24 @@ if __name__ == '__main__':
     attacks = construct_attacks(args)
 
     for attack, max_candidates in zip(attacks, args.max_candidates):
-        current_output_dir = args.output_dir + f"max_candidates_{max_candidates}/"
+        # Setup sub-directory indicating the corresponding attack parameters
+        attack_params_str = f"max_candidates_{max_candidates}"
+        current_output_dir = os.path.join(args.output_dir, attack_params_str)
         os.makedirs(current_output_dir, exist_ok=True)
 
-        # Redirect stdout to a log file
-        sys.stdout = open(current_output_dir + 'output.log', 'w')
+        # Setup output files
+        csv_logging_file = os.path.join(current_output_dir, "attack_results.csv")
+        analyzed_attack_results_file = os.path.join(current_output_dir, "results_analysis.txt")
+        
+        # Redirect stdout to the log file
+        sys.stdout = open(logging_file, 'w')
 
         # Attack all test samples with CSV logging and checkpoint saved every 1000 intervals
         attack_args = AttackArgs(
             num_examples=args.num_samples,
-            log_to_csv=current_output_dir + "results.csv",
+            log_to_csv=csv_logging_file,
             checkpoint_interval=1000,
-            checkpoint_dir=current_output_dir + "checkpoints",
+            checkpoint_dir=os.path.join(current_output_dir, "checkpoints"),
             disable_stdout=False,
             enable_advance_metrics=False,
             random_seed=args.seed
@@ -135,13 +156,14 @@ if __name__ == '__main__':
         attacker = Attacker(attack, dataset, attack_args)
         attacker.attack_dataset()
 
-        df = pd.read_csv(current_output_dir + "results.csv")
+        attack_results_df = pd.read_csv(csv_logging_file)
 
-        with open(current_output_dir + 'results.txt', 'w') as f:
+        with open(analyzed_attack_results_file, 'w') as f:
             for label in ['entailment', 'contradiction', 'neutral']:
-                percent, percent_perturbed = analyze_attack_results(df, label)
+                percent, percent_perturbed = analyze_attack_results(attack_results_df, label)
 
-                f.write(f"Percentage of {label} labels that were successfully attacked: {percent:.2f}%\n")
+                if isinstance(percent, float):
+                    f.write(f"Percentage of {label} labels that were successfully attacked: {percent:.2f}%\n")
 
                 for k in percent_perturbed.keys():
                     f.write(f'\tPercentage of rows with "perturbed_output" = {k}: {percent_perturbed[k]:.2f}%\n')

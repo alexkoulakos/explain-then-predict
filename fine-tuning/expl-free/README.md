@@ -1,4 +1,4 @@
-# BERT-based Natural Language Inference (NLI) classifier
+# Fine-tuning and evaluation of the BERT-based Natural Language Inference (NLI) classifier
 
 ## Overview
 This directory contains the full code for training and evaluating the model that serves as baseline in our experiments. This model is simply a BERT encoder followed by a typical classification head that is fed with a pair of premise and hypothesis and predicts the NLI label (entailment, contradiction, neutral).
@@ -9,7 +9,7 @@ This directory contains the full code for training and evaluating the model that
 In order to fine-tune a classifier for the NLI task using `bert-base-uncased` checkpoint from HuggingFace as the encoder module, you can run the following command:
 
 ```bash
-python models/expl-free/train.py \
+python fine-tuning/expl-free/train.py \
     --encoder_checkpt bert-base-uncased \
     --encoder_max_len 128 \
     --output_dir path/to/output/dir \
@@ -25,7 +25,7 @@ python models/expl-free/train.py \
 In order to use a fine-tuned BERT-based NLI classifier (stored in file *path/to/fine-tuned/bert-nli/model.pt*) for inference, you can run the following command:
 
 ```bash
-python models/expl-free/inference.py \
+python fine-tuning/expl-free/inference.py \
     --trained_model path/to/fine-tuned/bert-nli/model.pt \
     --encoder_checkpt bert-base-uncased \
     --encoder_max_len 128 \

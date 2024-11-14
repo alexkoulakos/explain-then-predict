@@ -1,27 +1,33 @@
+import textattack
 import torch
 import argparse
-import ssl
 import os
 import sys
-import json
 import logging
-import transformers
+import warnings
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
+# Add `utils.py` to interpreter path
+current_file = os.path.abspath(__file__)
+sys.path.append(os.path.dirname(os.path.dirname(current_file)))
 
 from typing import List
 
-from transformers import GenerationConfig, AutoTokenizer
 from textattack.attacker import Attacker
 from textattack.attack_args import AttackArgs
+
 from textattack.attack_recipes import TextFoolerJin2019
 
 from textattack.transformations.word_swaps import WordSwapEmbedding
 from textattack.constraints.semantics import WordEmbeddingDistance
 
-from model_wrappers.explain_then_predict import ExplainThenPredictModelWrapper
-from models.explain_then_predict import ExplainThenPredictModel
+from model_wrapper import BertNLIModelWrapper
+from model import BertNLIModel
+from tokenizer import BertNLITokenizer
 from utils import *
+
+# Suppress all kinds of warnings
+logging.getLogger("tensorflow").setLevel(logging.ERROR)
+warnings.filterwarnings("ignore")
 
 def construct_attacks(args) -> List[textattack.Attack]:
     attacks = []
@@ -45,32 +51,21 @@ def construct_attacks(args) -> List[textattack.Attack]:
     return attacks
 
 if __name__ == '__main__':
-    try:
-        _create_unverified_https_context = ssl._create_unverified_context
-    except AttributeError:
-        # Legacy Python that doesn't verify HTTPS certificates by default
-        pass
-    else:
-        # Handle target environment that doesn't support HTTPS verification
-        ssl._create_default_https_context = _create_unverified_https_context
-
     parser = argparse.ArgumentParser()
 
     # Required params
-    parser.add_argument("--seq2seq_model", type=str, required=True, 
-                        help="Path to the fine-tuned encoder-decoder model directory.")
-    parser.add_argument("--expl2label_model", type=str, required=True, 
-                        help="Path to the fine-tuned classifier model file.")
+    parser.add_argument("--trained_model_file", type=str, required=True, 
+                        help="Path to fine-tuned model file.")
     
-    parser.add_argument("--generation_config", required=True, type=str, 
-                        help="Path to the generation config file that contains generation parameters for model evaluation.")
+    parser.add_argument("--encoder_checkpt", required=True, type=str, 
+                        help="Encoder checkpoint for the fine-tuned encoder part.")
     
     parser.add_argument("--output_dir", type=str, required=True,
-                        help="Directory to store output files.")
+                        help="Directory to store output files (attack results synopsis and analysis).")
 
     # Non-required params
     parser.add_argument("--encoder_max_len", type=int, default=128, 
-                        help="Max number of tokens the seq2seq encoder can process.")
+                        help="Max number of tokens the encoder can process.")
     
     parser.add_argument("--min_cos_sim", nargs="+", type=float, default=0.5,
                         help="List of cosine similarity thresholds to use in each run.")
@@ -96,26 +91,19 @@ if __name__ == '__main__':
     
     args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    args.expl2label_encoder_checkpt = torch.load(args.expl2label_model, map_location=args.device)['args'].encoder_checkpt
-
-    # Set up output files and directories
-    if not args.output_dir.endswith('/'):
-        args.output_dir += "/"
-
+    # Set up output directory and logging file
     os.makedirs(args.output_dir, exist_ok=True)
+
+    logging_file = os.path.join(args.output_dir, "output.log")
 
     # Setup logging
     args.logger = logging.getLogger(__name__)
 
-    logging.basicConfig(filename=args.output_dir+"output.log",
+    logging.basicConfig(filename=logging_file,
                         format = '%(asctime)s - %(levelname)s - %(message)s',
                         datefmt = '%m/%d/%Y %H:%M:%S',
-                        level = logging.INFO
-    )
+                        level = logging.INFO)
     
-    print(f"transformers: v. {transformers.__version__}\n")
-    args.logger.info(f"transformers: v. {transformers.__version__}\n")
-
     print(f"Command line arguments:")
     args.logger.info(f"Command line arguments:")
     for name in vars(args):
@@ -124,26 +112,27 @@ if __name__ == '__main__':
         print(f"\t{name}: {value}")
         args.logger.info(f"\t{name}: {value}")
 
-    # Instantiate GenerationConfig class based on generation config file    
-    with open(args.generation_config) as f:
-        config_dict = json.load(f)
+    # Load pretrained model
+    model = BertNLIModel(
+        args.encoder_checkpt,
+        args.device
+    )
+
+    model.to(args.device)
+
+    if args.device == torch.device('cpu'):
+        model.load_state_dict(torch.load(args.trained_model_file, map_location=args.device)['model_state_dict'])
+    else:
+        model.load_state_dict(torch.load(args.trained_model_file)['model_state_dict'])
     
-    if config_dict['early_stopping'] in ['True', 'False']:
-        config_dict['early_stopping'] = eval(config_dict['early_stopping'])
-    
-    config_dict['do_sample'] = eval(config_dict['do_sample'])
-    
-    if config_dict['penalty_alpha'] == 'None':
-        config_dict['penalty_alpha'] = None
-    
-    args.generation_config = GenerationConfig(**config_dict)
-    
-    # Load model and tokenizer
-    model = ExplainThenPredictModel(args).to(args.device)
-    tokenizer = AutoTokenizer.from_pretrained(model.seq2seq_model.config.encoder._name_or_path)
+    # Load tokenizer for NLI task
+    tokenizer = BertNLITokenizer(
+        args.encoder_checkpt, 
+        args.encoder_max_len
+    )
 
     # Load full model via its model wrapper
-    model_wrapper = ExplainThenPredictModelWrapper(model, tokenizer)
+    model_wrapper = BertNLIModelWrapper(model, tokenizer)
 
     # Specify victim dataset
     dataset = load_dataset()
@@ -152,18 +141,24 @@ if __name__ == '__main__':
     attacks = construct_attacks(args)
 
     for attack, min_cos_sim in zip(attacks, args.min_cos_sim):
-        current_output_dir = args.output_dir + f"max_candidates_{args.max_candidates}__min_cos_sim_{min_cos_sim}/"
+        # Setup sub-directory indicating the corresponding attack parameters
+        attack_params_str = f"max_candidates_{args.max_candidates}__min_cos_sim_{min_cos_sim}"
+        current_output_dir = os.path.join(args.output_dir, attack_params_str)
         os.makedirs(current_output_dir, exist_ok=True)
+
+        # Setup output files
+        csv_logging_file = os.path.join(current_output_dir, "attack_results.csv")
+        analyzed_attack_results_file = os.path.join(current_output_dir, "results_analysis.txt")
         
-        # Redirect stdout to a log file
-        sys.stdout = open(current_output_dir + 'output.log', 'w')
+        # Redirect stdout to the log file
+        sys.stdout = open(logging_file, 'w')
 
         # Attack all test samples with CSV logging and checkpoint saved every 1000 intervals
         attack_args = AttackArgs(
             num_examples=args.num_samples,
-            log_to_csv=current_output_dir + "results.csv",
+            log_to_csv=csv_logging_file,
             checkpoint_interval=1000,
-            checkpoint_dir=current_output_dir + "checkpoints",
+            checkpoint_dir=os.path.join(current_output_dir, "checkpoints"),
             disable_stdout=False,
             enable_advance_metrics=False,
             random_seed=args.seed
@@ -172,13 +167,14 @@ if __name__ == '__main__':
         attacker = Attacker(attack, dataset, attack_args)
         attacker.attack_dataset()
 
-        df = pd.read_csv(current_output_dir + "results.csv")
+        attack_results_df = pd.read_csv(csv_logging_file)
 
-        with open(current_output_dir + 'results.txt', 'w') as f:
+        with open(analyzed_attack_results_file, 'w') as f:
             for label in ['entailment', 'contradiction', 'neutral']:
-                percent, percent_perturbed = analyze_attack_results(df, label)
+                percent, percent_perturbed = analyze_attack_results(attack_results_df, label)
 
-                f.write(f"Percentage of {label} labels that were successfully attacked: {percent:.2f}%\n")
+                if isinstance(percent, float):
+                    f.write(f"Percentage of {label} labels that were successfully attacked: {percent:.2f}%\n")
 
                 for k in percent_perturbed.keys():
                     f.write(f'\tPercentage of rows with "perturbed_output" = {k}: {percent_perturbed[k]:.2f}%\n')

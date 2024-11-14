@@ -54,7 +54,10 @@ def analyze_attack_results(df: pd.DataFrame, original_label: str):
     total_filtered_rows = len(filtered_df)
     
     # Percentage compared to the original dataframe
-    percent = (len(filtered_df) / len(df[df['result_type'] == 'Successful'])) * 100
+    if len(df[df['result_type'] == 'Successful']) != 0:
+        percent = (len(filtered_df) / len(df[df['result_type'] == 'Successful'])) * 100
+    else:
+        percent = 'N/A'
 
     percent_perturbed = dict()
 
@@ -63,6 +66,7 @@ def analyze_attack_results(df: pd.DataFrame, original_label: str):
         count_perturbed = len(filtered_df[filtered_df['perturbed_output'] == perturbed_id])
 
         # Calculate the percentages
-        percent_perturbed[ID2LABEL[perturbed_id]] = (count_perturbed / total_filtered_rows) * 100
+        if total_filtered_rows != 0:
+            percent_perturbed[ID2LABEL[perturbed_id]] = (count_perturbed / total_filtered_rows) * 100
 
     return percent, percent_perturbed

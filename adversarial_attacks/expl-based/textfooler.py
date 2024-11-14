@@ -1,53 +1,55 @@
 import torch
 import argparse
-import ssl
 import os
 import sys
-import json
 import logging
-import transformers
+import warnings
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
+# Add `utils.py` to interpreter path
+current_file = os.path.abspath(__file__)
+sys.path.append(os.path.dirname(os.path.dirname(current_file)))
 
 from typing import List
 
 from transformers import GenerationConfig, AutoTokenizer
-
 from textattack.attacker import Attacker
 from textattack.attack_args import AttackArgs
+from textattack.attack_recipes import TextFoolerJin2019
 
-from textattack.transformations.word_swaps import WordSwapMaskedLM
-from textattack.attack_recipes import BERTAttackLi2020
+from textattack.transformations.word_swaps import WordSwapEmbedding
+from textattack.constraints.semantics import WordEmbeddingDistance
 
-from model_wrappers.explain_then_predict import ExplainThenPredictModelWrapper
-from models.explain_then_predict import ExplainThenPredictModel
-
+from model_wrapper import ExplainThenPredictModelWrapper
+from model import ExplainThenPredictModel
 from utils import *
+from generation_config import GENERATION_CONFIG
+
+# Suppress all kinds of warnings
+logging.getLogger("tensorflow").setLevel(logging.ERROR)
+warnings.filterwarnings("ignore")
 
 def construct_attacks(args) -> List[textattack.Attack]:
     attacks = []
 
-    for max_candidates in args.max_candidates:
-        # Bind BERT-attack attack recipe to model wrapper
-        attack = BERTAttackLi2020.build(model_wrapper)
+    for min_cos_sim in args.min_cos_sim:
+        # Bind TextFooler attack recipe to model wrapper
+        attack = TextFoolerJin2019.build(model_wrapper)
 
-        # Create WordSwapMaskedLM transformation according to `max_candidates` parameter.
-        attack.transformation = WordSwapMaskedLM(method="bert-attack", max_candidates=max_candidates)
+        # Create WordSwapEmbedding transformation according to `max_candidates` parameter.
+        attack.transformation = WordSwapEmbedding(max_candidates=args.max_candidates)
+
+        # Create WordEmbeddingDistance constraint according to `min_cos_sim` parameter.
+        constraint = WordEmbeddingDistance(min_cos_sim=min_cos_sim)
+
+        for i in range(len(attack.constraints)):
+            if isinstance(attack.constraints[i], WordEmbeddingDistance):
+                attack.constraints[i] = constraint
         
         attacks.append(add_input_column_modification(attack, args.column_to_ignore))
     
     return attacks
 
 if __name__ == '__main__':
-    try:
-        _create_unverified_https_context = ssl._create_unverified_context
-    except AttributeError:
-        # Legacy Python that doesn't verify HTTPS certificates by default
-        pass
-    else:
-        # Handle target environment that doesn't support HTTPS verification
-        ssl._create_default_https_context = _create_unverified_https_context
-
     parser = argparse.ArgumentParser()
 
     # Required params
@@ -56,18 +58,20 @@ if __name__ == '__main__':
     parser.add_argument("--expl2label_model", type=str, required=True, 
                         help="Path to the fine-tuned classifier model file.")
     
-    parser.add_argument("--generation_config", required=True, type=str, 
-                        help="Path to the generation config file that contains generation parameters for model evaluation.")
+    parser.add_argument("--text_generation_strategy", required=True, type=str, 
+                        help="Strategy to use for text generation during model validation. Strategy must be exactly one of: greedy_search, beam_search, top-k_sampling, top-p_sampling")
     
     parser.add_argument("--output_dir", type=str, required=True,
-                        help="Directory to store output files.")
+                        help="Directory to store output files (attack results synopsis and analysis).")
 
     # Non-required params
     parser.add_argument("--encoder_max_len", type=int, default=128, 
                         help="Max number of tokens the seq2seq encoder can process.")
     
-    parser.add_argument("--max_candidates", nargs="+", type=int, default=0.5,
-                        help="List of K values to use in each run.")
+    parser.add_argument("--min_cos_sim", nargs="+", type=float, default=0.5,
+                        help="List of cosine similarity thresholds to use in each run.")
+    parser.add_argument("--max_candidates", type=int, default=50,
+                        help="Max number of candidates (same for all runs).")
     
     parser.add_argument("--target_sentence", type=str, default="premise",
                         help="Input sentence to be perturbed (premise or hypothesis)")
@@ -90,23 +94,18 @@ if __name__ == '__main__':
 
     args.expl2label_encoder_checkpt = torch.load(args.expl2label_model, map_location=args.device)['args'].encoder_checkpt
 
-    # Set up output files and directories
-    if not args.output_dir.endswith('/'):
-        args.output_dir += "/"
-
+    # Set up output directory and files
     os.makedirs(args.output_dir, exist_ok=True)
+
+    logging_file = os.path.join(args.output_dir, "output.log")
 
     # Setup logging
     args.logger = logging.getLogger(__name__)
 
-    logging.basicConfig(filename=args.output_dir+"output.log",
+    logging.basicConfig(filename=logging_file,
                         format = '%(asctime)s - %(levelname)s - %(message)s',
                         datefmt = '%m/%d/%Y %H:%M:%S',
-                        level = logging.INFO
-    )
-    
-    print(f"transformers: v. {transformers.__version__}\n")
-    args.logger.info(f"transformers: v. {transformers.__version__}\n")
+                        level = logging.INFO)
 
     print(f"Command line arguments:")
     args.logger.info(f"Command line arguments:")
@@ -115,19 +114,11 @@ if __name__ == '__main__':
 
         print(f"\t{name}: {value}")
         args.logger.info(f"\t{name}: {value}")
+    
+    # args.text_generation_strategy points to the corresponding entry of GENERATION_CONFIG
+    config_dict = GENERATION_CONFIG[args.text_generation_strategy]
 
-    # Instantiate GenerationConfig class based on generation config file    
-    with open(args.generation_config) as f:
-        config_dict = json.load(f)
-    
-    if config_dict['early_stopping'] in ['True', 'False']:
-        config_dict['early_stopping'] = eval(config_dict['early_stopping'])
-    
-    config_dict['do_sample'] = eval(config_dict['do_sample'])
-    
-    if config_dict['penalty_alpha'] == 'None':
-        config_dict['penalty_alpha'] = None
-    
+    # Instantiate GenerationConfig class based on config_dict
     args.generation_config = GenerationConfig(**config_dict)
     
     # Load model and tokenizer
@@ -140,22 +131,28 @@ if __name__ == '__main__':
     # Specify victim dataset
     dataset = load_dataset()
 
-    # Create attacks, based on the different values of max_candidates (K)
+    # Create a list of attacks based on the different values of min_cos_sim
     attacks = construct_attacks(args)
 
-    for attack, max_candidates in zip(attacks, args.max_candidates):
-        current_output_dir = args.output_dir + f"max_candidates_{max_candidates}/"
+    for attack, min_cos_sim in zip(attacks, args.min_cos_sim):
+        # Setup sub-directory indicating the corresponding attack parameters
+        attack_params_str = f"max_candidates_{args.max_candidates}__min_cos_sim_{min_cos_sim}"
+        current_output_dir = os.path.join(args.output_dir, attack_params_str)
         os.makedirs(current_output_dir, exist_ok=True)
 
-        # Redirect stdout to a log file
-        sys.stdout = open(current_output_dir + 'output.log', 'w')
+        # Setup output files
+        csv_logging_file = os.path.join(current_output_dir, "attack_results.csv")
+        analyzed_attack_results_file = os.path.join(current_output_dir, "results_analysis.txt")
+        
+        # Redirect stdout to the log file
+        sys.stdout = open(logging_file, 'w')
 
         # Attack all test samples with CSV logging and checkpoint saved every 1000 intervals
         attack_args = AttackArgs(
             num_examples=args.num_samples,
-            log_to_csv=current_output_dir + "results.csv",
+            log_to_csv=csv_logging_file,
             checkpoint_interval=1000,
-            checkpoint_dir=current_output_dir + "checkpoints",
+            checkpoint_dir=os.path.join(current_output_dir, "checkpoints"),
             disable_stdout=False,
             enable_advance_metrics=False,
             random_seed=args.seed
@@ -164,13 +161,14 @@ if __name__ == '__main__':
         attacker = Attacker(attack, dataset, attack_args)
         attacker.attack_dataset()
 
-        df = pd.read_csv(current_output_dir + "results.csv")
+        attack_results_df = pd.read_csv(csv_logging_file)
 
-        with open(current_output_dir + 'results.txt', 'w') as f:
+        with open(analyzed_attack_results_file, 'w') as f:
             for label in ['entailment', 'contradiction', 'neutral']:
-                percent, percent_perturbed = analyze_attack_results(df, label)
+                percent, percent_perturbed = analyze_attack_results(attack_results_df, label)
 
-                f.write(f"Percentage of {label} labels that were successfully attacked: {percent:.2f}%\n")
+                if isinstance(percent, float):
+                    f.write(f"Percentage of {label} labels that were successfully attacked: {percent:.2f}%\n")
 
                 for k in percent_perturbed.keys():
                     f.write(f'\tPercentage of rows with "perturbed_output" = {k}: {percent_perturbed[k]:.2f}%\n')

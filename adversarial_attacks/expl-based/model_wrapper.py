@@ -1,11 +1,8 @@
 import torch
-import sys
-
-sys.path.append("../")
 
 from textattack.models.wrappers.model_wrapper import ModelWrapper
 
-from models.explain_then_predict import ExplainThenPredictModel
+from model import ExplainThenPredictModel
 
 class ExplainThenPredictModelWrapper(ModelWrapper):
     def __init__(self, model: ExplainThenPredictModel, tokenizer):
@@ -19,7 +16,6 @@ class ExplainThenPredictModelWrapper(ModelWrapper):
         premises, hypotheses = [], []
 
         for i in range(len(inputs)):
-            print(inputs[i])
             
             if isinstance(inputs[i], tuple):
                 premise = inputs[i][0]
