@@ -7,7 +7,7 @@ __explanation:__ Land Rover is a vehicle. [corresponds to the pair (premise, hyp
 
 __label__: entailment
 
-## Usage
+## Example usage
 
 ### Training
 In order to fine-tune an _expl2label_ model using `bert-base-uncased` checkpoint from HuggingFace as the encoder module, you can run the following command:

@@ -3,7 +3,7 @@
 ## Overview
 This directory contains the full code for training and evaluating the model that serves as baseline in our experiments. This model is simply a BERT encoder followed by a typical classification head that is fed with a pair of premise and hypothesis and predicts the NLI label (entailment, contradiction, neutral).
 
-## Usage
+## Example usage
 
 ### Training
 In order to fine-tune a classifier for the NLI task using `bert-base-uncased` checkpoint from HuggingFace as the encoder module, you can run the following command:

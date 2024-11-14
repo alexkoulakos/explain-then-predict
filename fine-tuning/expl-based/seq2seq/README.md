@@ -9,7 +9,7 @@ __hypothesis:__ A vehicle is crossing a river.
 
 __explanation:__ Land Rover is a vehicle.
 
-## Usage
+## Example usage
 
 ### Training
 In order to fine-tune a _seq2seq_ model using `bert-base-uncased` checkpoint from HuggingFace as the encoder module and the `gpt2` checkpoint as the decoder module, you can run the following command:

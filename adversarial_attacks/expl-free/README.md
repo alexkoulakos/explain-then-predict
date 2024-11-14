@@ -1,6 +1,6 @@
 # Adversarial attacks against the fine-tuned BERT-based classifier
 
-## Usage
+## Example usage
 
 ### TextFooler
 In order to perform an adversarial attack using the **TextFooler** attack recipe against the fine-tuned BERT-based NLI classifier (stored in directory *path/to/fine-tuned/bert-nli/model.pt*), you can run the following command:
