@@ -1,7 +1,7 @@
 # Adversarial attacks
 
 ## Overview
-This directory contains the code for carrying out the adversarial attacks experiments against the fine-tuned explanations-based (`expl-based`) and explanations-free (`expl-free`) models. We choose to attack the victim models using the *TextFooler* and *BERT-attack* attack recipes, as they are state-of-the-art in NLP and most importantly achieve high-quality perturbations on samples drawn from the SNLI dataset.
+This directory contains the code for carrying out the adversarial attacks experiments against the fine-tuned explanations-based (`expl-based`) and explanations-free (`expl-free`) models. We choose to attack the victim models using the *TextFooler* and *BERT-attack* attack recipes, as they are state-of-the-art in NLP and, most importantly, achieve high-quality perturbations on samples drawn from the SNLI dataset.
 
 ## Structure
 The current directory includes the two following sub-directories:

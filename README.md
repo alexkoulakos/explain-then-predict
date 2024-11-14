@@ -11,8 +11,8 @@ In this work, we investigate whether the usage of intermediate explanations in t
 
 ## Project structure
 The repo is organized in the following core directories:
- * `fine-tuning`: Includes the code for training and evaluating all the models that are used in our experiments. See the README file located in `fine-tuning` directory for more details.
- * `adversarial_attacks`: Includes the code for performing adversarial attacks against the aforementioned models. See the README file located in `adversarial_attacks` directory for more details.
+ * `fine-tuning`: Includes the code for training and evaluating all the models that are used in our experiments. See the README file located in the `fine-tuning` directory for more details.
+ * `adversarial_attacks`: Includes the code for performing adversarial attacks against the aforementioned models. See the README file located in the `adversarial_attacks` directory for more details.
 
 ## Installation
 1. Create a local copy of the repo: `git clone https://github.com/alexkoulakos/explain-then-predict.git`

@@ -3,10 +3,10 @@
 ## Usage
 
 ### TextFooler
-In order to perform an adversarial attack using the **TextFooler** attack recipe against the _seq2seq_ model (stored in directory _path/to/seq2seq/fine-tuned/model/dir_) followed by the _expl2label_ model (stored in file _path/to/expl2label/fine-tuned/model.pt_), you can use the below:
+In order to perform an adversarial attack using the **TextFooler** attack recipe against the _seq2seq_ model (stored in directory _path/to/seq2seq/fine-tuned/model/dir_) followed by the _expl2label_ model (stored in file _path/to/expl2label/fine-tuned/model.pt_), you can run the following command:
 
 ```bash
-python textfooler.py \
+python adversarial_attacks/expl-based/textfooler.py \
     --seq2seq_model path/to/seq2seq/fine-tuned/model/dir \
     --expl2label_model path/to/expl2label/fine-tuned/model.pt \
     --text_generation_strategy greedy_search \
@@ -25,10 +25,10 @@ python textfooler.py \
 * The second adversarial attack has parameters `max_candidates=50` and `min_cos_sim=0.75` and all its related output files are stored in the directory `path/to/output/dir/max_candidates_50__min_cos_sim_0.75`.
 
 ### BERT-attack
-In order to perform an adversarial attack using the **BERT-attack** attack recipe against the _seq2seq_ model (stored in directory _path/to/seq2seq/fine-tuned/model/dir_) followed by the _expl2label_ model (stored in file _path/to/expl2label/fine-tuned/model.pt_), you can use the below:
+In order to perform an adversarial attack using the **BERT-attack** attack recipe against the _seq2seq_ model (stored in directory _path/to/seq2seq/fine-tuned/model/dir_) followed by the _expl2label_ model (stored in file _path/to/expl2label/fine-tuned/model.pt_), you can run the following command:
 
 ```bash
-python bert-attack.py \
+python adversarial_attacks/expl-based/bert-attack.py \
     --seq2seq_model path/to/seq2seq/fine-tuned/model/dir \
     --expl2label_model path/to/expl2label/fine-tuned/model.pt \
     --text_generation_strategy greedy_search \
