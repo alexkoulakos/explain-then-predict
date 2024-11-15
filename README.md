@@ -5,7 +5,7 @@
 ## Overview
 This repository contains the source code for our BlackBoxNLP 2024 @ EMNLP paper:
 
-[Enhancing adversarial robustness in Natural Language Inference using explanations](https://aclanthology.org/2024.blackboxnlp-1.7)
+[_Enhancing adversarial robustness in Natural Language Inference using explanations_](https://aclanthology.org/2024.blackboxnlp-1.7)
 
 In this work, we investigate whether the usage of intermediate explanations in the Natural Language Inference (NLI) task can serve as a model-agnostic defence strategy against adversarial attacks. Our claim is that the intermediate explanation can filter out potential noise superimposed by the adversarial attack in the input pair (premise, hypothesis). Through extensive experimentation, we prove that conditioning the output label (entailment, contradiction, neutral) on an intermediate explanation that describes the inference relationship between the input premise and hypothesis, adversarial robustness is indeed achieved.
 
