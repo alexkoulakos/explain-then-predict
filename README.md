@@ -1,6 +1,6 @@
 # Adversarial robustness under the "Explain Then Predict" setting
 
-[![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/) [![Transformers](https://img.shields.io/badge/Transformers-FFD21E?logo=huggingface&logoColor=black)](https://huggingface.co/) [![TextAttack](https://img.shields.io/badge/TextAttack-20232A?logo=octopusdeploy&logoColor=D61F2A)](https://textattack.readthedocs.io/)
+![Static Badge](https://img.shields.io/badge/python-v3\.11-blue?style=flat) ![Torch Badge](https://img.shields.io/badge/torch-v2\.5-EE4C2C?style=flat) ![Transformers Badge](https://img.shields.io/badge/transformers-v4\.46-FFD21E?style=flat) ![TextAttack Badge](https://img.shields.io/badge/textattack-v0\.3-20232A?style=flat) ![nltk Badge](https://img.shields.io/badge/nltk-v3\.8-lightgrey?style=flat)
 
 ## Overview
 This repository contains the source code for our BlackBoxNLP 2024 @ EMNLP paper:
